@@ -1,4 +1,4 @@
-# Migração 001 — `cliente_origem`, correção da unique key de `cliente_uc` e views por fornecedor
+# Melhoria 20260406 — `cliente_origem`, correção da unique key de `cliente_uc` e views por fornecedor
 
 **Data:** 2026-04-06  
 **Contexto:** Introdução do fornecedor contatus ao pipeline, com dados históricos que podem conter ou não UC.
@@ -230,10 +230,10 @@ Quando um novo fornecedor trouxer UC para um CPF que está em `tabela_macro_api`
 
 ```bash
 # Simulação (sem alterar nada)
-python db/migrations/001_cliente_origem_views_fornecedor/migration.py --dry-run
+python db/improvements/20260406_cliente_origem_views_fornecedor/migration.py --dry-run
 
 # Aplicação real
-python db/migrations/001_cliente_origem_views_fornecedor/migration.py
+python db/improvements/20260406_cliente_origem_views_fornecedor/migration.py
 ```
 
 ## Rollback
