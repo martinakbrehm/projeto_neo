@@ -165,8 +165,8 @@ def carregar_maps(cur) -> tuple[dict, dict, set, set, set]:
     cur.execute("SELECT cpf, id FROM clientes")
     cpf_map = {r[0]: r[1] for r in cur.fetchall()}
 
-    # TODO [migração 001]: incluir distribuidora_id na chave após aplicar
-    # db/migrations/001_cliente_origem_views_fornecedor/migration.py
+    # TODO [improvements 20260406]: incluir distribuidora_id na chave após aplicar
+    # db/improvements/20260406_cliente_origem_views_fornecedor/migration.py
     # Antes:  SELECT cliente_id, uc, id FROM cliente_uc
     #         uc_map = {(r[0], r[1]): r[2] for r in cur.fetchall()}
     # Depois: SELECT cliente_id, uc, distribuidora_id, id FROM cliente_uc
@@ -286,7 +286,7 @@ def processar_staging(conn, staging_id: int, dry_run: bool) -> dict:
             stats["erros"] += 1
             continue
 
-        # TODO [migração 001]: registrar proveniência após migration.py aplicado
+        # TODO [improvements 20260406]: registrar proveniência após improvements/20260406_cliente_origem_views_fornecedor/migration.py aplicado
         # Todos os dados que passam por staging atualmente são de fornecedor2.
         # Após a migração, inserir aqui:
         #   if not dry_run:
@@ -300,7 +300,7 @@ def processar_staging(conn, staging_id: int, dry_run: bool) -> dict:
         # ------------------------------------------------------------------
         # cliente_uc (INSERT IGNORE → get id)
         # ------------------------------------------------------------------
-        # TODO [migração 001]: chave deve incluir distrib_id após migration.py aplicado
+        # TODO [improvements 20260406]: chave deve incluir distrib_id após improvements/20260406_cliente_origem_views_fornecedor/migration.py aplicado
         # chave_uc = (cliente_id if cliente_id > 0 else 0, uc, distrib_id)
         chave_uc = (cliente_id if cliente_id > 0 else 0, uc)
         if chave_uc not in uc_map:
@@ -315,7 +315,7 @@ def processar_staging(conn, staging_id: int, dry_run: bool) -> dict:
                     uc_map[chave_uc] = cur.lastrowid
                     stats["uc_novas"] += 1
                 else:
-                    # TODO [migração 001]: adicionar AND distribuidora_id=%s no WHERE
+                    # TODO [improvements 20260406]: adicionar AND distribuidora_id=%s no WHERE
                     cur.execute(
                         "SELECT id FROM cliente_uc WHERE cliente_id=%s AND uc=%s",
                         (cliente_id, uc),

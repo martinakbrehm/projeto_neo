@@ -31,7 +31,7 @@ SQLs = {
         LEFT JOIN respostas     r ON r.id = m.resposta_id
         LEFT JOIN distribuidoras d ON d.id = m.distribuidora_id
     """,
-    # TODO [migração 001]: após aplicar db/migrations/001_cliente_origem_views_fornecedor/migration.py
+    # TODO [improvements 20260406]: após aplicar db/improvements/20260406_cliente_origem_views_fornecedor/migration.py
     # adicionar as seguintes chaves para filtro por fornecedor no dashboard:
     #
     # "fornecedor2_macro":  SELECT ... FROM view_fornecedor2_macro  + JOINs respostas/distribuidoras
