@@ -1,0 +1,8 @@
+COPIE E EXECUTE ESTE COMANDO NO SERVIDOR SSH QUE VOCÊ JÁ TEM CONECTADO:
+===========================================================================
+
+mkdir -p ~/.ssh && echo "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDz4Qea5LDr+Yn9XzUoJzE+X9ynUWFdVqsbNl+/3xUQ7HFY8XchmHhfAPqR3yayvSbNWHlwwbqosPmbg/TeNBDYtIDyCRcUixkLNK3hV8OFCRAMbUYFF1OGuylLlkA4KVQi4djOewiykjP2g86xLqBAP2Jb/OjHfGnJWkocjt9EibOiI6sYlzKeAj+OOP2eIKF5tnG01DUlzfWUewMPeEhpxxi3hwXIg7mclYZ3aI35pgnFU5iEhGhIZx/RdiXYiT6ayTTDzlF5KkxCrfPmzf+H30F/Gy6m3UsSbtLjDqstqzszimk91PcTy/IHBzvftmQahXPJDIsGEgrM9vtfdRBqM4l9isnkW70TAgW5M4P9Ry3l542brJHr6n+IcuomYeLlD8Kqm7mZXKr7c/yqes57fxhD0npIrQWPEp25NrD3dvHNdvkM+on7jIb/3n3vYJM/Yl89nSiednzztUNOl70rPixGsRUkwXeEA5ZVNrR1aaTLBBBJIi9mAKFei3UocSs= gismi@Makrinho" >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && chmod 700 ~/.ssh && echo "✅ Chave SSH instalada com sucesso!"
+
+===========================================================================
+
+Após executar, digite "exit" para sair da sessão SSH e vamos testar a conexão automática!

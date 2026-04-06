@@ -1,0 +1,49 @@
+NOVA ABORDAGEM - SSH BASICO SEM COMPLICACAO
+==========================================
+
+❌ REMOVEMOS: PuTTY, configurações complexas, automação avançada
+
+✅ FOCO AGORA: SSH básico que SEMPRE funciona
+
+🚀 PRIMEIRA VEZ (Execute uma vez):
+1. instalar_dependencias.bat (Python e bibliotecas)
+
+🔄 USO NORMAL (SIMPLES):
+script_master.bat -> Opção 4 (Executar script BASICO)
+
+⚡ EXECUÇÃO DIRETA:
+executar_basico.bat
+
+📋 CREDENCIAIS:
+Servidor: root@191.252.200.81
+Senha: !@RgRfhnyKY7YxF (você vai digitar quando pedir)
+
+🎯 COMO FUNCIONA:
+1. Conecta SSH manual (pede senha 1 vez)
+2. Cria túnel SSH manual (pede senha 1 vez)  
+3. Executa Python
+4. Limpa conexões
+
+📁 ARQUIVOS IMPORTANTES:
+- consulta_contrato.py (script principal)
+- CPFS_SEM ZERO A ESQUERDA_REVALIDAR.xlsx (dados)
+- resultado_consulta.xlsx (resultado)
+
+💡 VANTAGENS DA ABORDAGEM BÁSICA:
+- ✅ Funciona SEMPRE
+- ✅ Sem configuração complexa
+- ✅ Fácil de entender
+- ✅ Sem dependências externas
+- ✅ SSH nativo do Windows
+
+🔧 SE QUISER SSH SEM SENHA:
+script_master.bat -> Opção 2 (Configurar SSH SEM SENHA)
+- Gera chave SSH
+- Copia para servidor
+- Testa conexão automática
+
+📝 RESUMO: AGORA É SIMPLES!
+1. Execute: script_master.bat
+2. Escolha: Opção 4
+3. Digite senha quando pedir (2 vezes no máximo)
+4. Pronto! Script roda completo

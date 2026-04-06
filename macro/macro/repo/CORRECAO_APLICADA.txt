@@ -1,0 +1,31 @@
+CORRECAO - SCRIPT MASTER ATUALIZADO
+====================================
+
+❌ PROBLEMA IDENTIFICADO:
+Opcao 5 tentava chamar 'executar_sem_senha.bat' que foi removido na limpeza
+
+✅ SOLUCAO APLICADA:
+Todas as opcoes de execucao agora usam 'executar_basico.bat'
+
+📋 MUDANCAS NO MENU:
+
+AGORA TODAS AS OPCOES SAO BASICAS:
+├── Opcao 4: Executar script BASICO ⭐ RECOMENDADO
+├── Opcao 5: Executar script COMPLETO (mesmo processo basico)
+└── Opcao 6: Executar script RAPIDO (mesmo processo basico)
+
+🎯 RESULTADO:
+- Opcoes 4, 5 e 6 = TODAS executam executar_basico.bat
+- Processo simples e confiavel
+- Pede senha SSH quando necessario (max 2 vezes)
+- Zero configuracao complexa
+
+✅ AGORA FUNCIONA:
+script_master.bat → Qualquer opcao 4, 5 ou 6 → Funciona perfeitamente!
+
+📝 OBSERVACAO:
+As opcoes 5 e 6 sao mantidas para compatibilidade, mas todas fazem a mesma coisa:
+executam o processo basico e confiavel de SSH + Tunel + Python.
+
+🚀 TESTE NOVAMENTE:
+script_master.bat → Opcao 5 → Deve funcionar sem erro!

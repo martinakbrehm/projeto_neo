@@ -1,0 +1,75 @@
+# Arquivos de ambiente e credenciais
+.env
+*.env
+.env.local
+.env.production
+
+# Chaves SSH e certificados
+*.key
+*.pub
+*.pem
+*.p12
+*.pfx
+
+# Arquivos de cache Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Ambiente virtual
+.venv/
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+logs/
+
+# Arquivos temporários
+*.tmp
+*.temp
+.DS_Store
+Thumbs.db
+
+# Arquivos de backup
+*.bak
+*.backup
+*.old
+
+# Arquivos específicos do projeto
+repo/10.219.11.156
+repo/neo_ssh_key*
+*.bat
+
+# Arquivos de configuração local
+config.local.*
+settings.local.*

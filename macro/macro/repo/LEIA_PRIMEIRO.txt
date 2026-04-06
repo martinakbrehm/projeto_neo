@@ -1,0 +1,29 @@
+INSTRUÇÕES RÁPIDAS - NEO ENERGIA (BÁSICO)
+==========================================
+
+🚀 PRIMEIRA VEZ (Execute uma vez):
+1. instalar_dependencias.bat
+
+🔄 USO NORMAL (SIMPLES):
+script_master.bat (opção 4 - BÁSICO)
+
+⚡ EXECUÇÃO DIRETA:
+executar_basico.bat
+
+📋 CREDENCIAIS:
+Servidor: root@191.252.200.81
+Senha: !@RgRfhnyKY7YxF
+⚠️  IMPORTANTE: VAI PEDIR ESTA SENHA (1-2 vezes) - ISSO É NORMAL!
+
+🔧 DIAGNÓSTICO:
+diagnostico_conectividade.bat
+
+📁 ARQUIVOS IMPORTANTES:
+- consulta_contrato.py (script principal)
+- CPFS_SEM ZERO A ESQUERDA_REVALIDAR.xlsx (dados)
+- resultado_consulta.xlsx (resultado)
+
+💡 NOVA ABORDAGEM: 
+- SSH básico que SEMPRE funciona
+- Sem configurações complexas
+- Apenas digite a senha quando pedir
