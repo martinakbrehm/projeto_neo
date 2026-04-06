@@ -11,7 +11,7 @@ Integrado ao pipeline `projeto_banco_neo` como a etapa central do ciclo automati
 
 ```
 03_buscar_lote_macro.py  →  executar_automatico.py  →  04_processar_retorno_macro.py
-       (ETL)                   (este projeto)                   (ETL)
+    (EXTRACTION)                (este projeto)                   (LOAD)
          │                           │                             │
    Exporta lote                SSH + API Neo                 Interpreta respostas
    do banco para               Energia. Salva                e atualiza tabela_macros
@@ -326,7 +326,7 @@ macro/
 | Túnel abre mas fecha imediatamente | Chave SSH não aceita | Ver seção 3 | Ver seção 3 |
 | `Host key verification failed` | Servidor trocou de chave | Reveja registro via `regedit` | `ssh-keygen -R SEU_SERVIDOR` |
 | `API não respondeu` | VPN inativa | O script tenta `ipsec up vpn` automaticamente | Idem |
-| `lote_pendente.csv não encontrado` | Banco vazio ou ETL falhou | `python etl/load/macro/03_buscar_lote_macro.py` | `python3 etl/load/macro/03_buscar_lote_macro.py` |
+| `lote_pendente.csv não encontrado` | Banco vazio ou ETL falhou | `python etl/extraction/macro/03_buscar_lote_macro.py` | `python3 etl/extraction/macro/03_buscar_lote_macro.py` |
 | `resultado_lote.csv não encontrado` | Macro abortou antes de completar | Registros voltam para `reprocessar` no próximo ciclo | Idem |
 | Porta 5000 já em uso | Processo anterior não encerrado | `taskkill /IM plink.exe /F` | `kill $(lsof -t -i:5000)` |
 | Dialog não abre (modo manual) | Sem display gráfico | Não se aplica | Use `--arquivo` no modo automático |

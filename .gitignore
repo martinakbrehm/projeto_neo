@@ -1,11 +1,12 @@
 # Credenciais – NUNCA versionar
 config.py
+.env
+macro/macro/.env
 
 # Python
 __pycache__/
 *.py[cod]
 *.pyo
-.env
 .venv/
 venv/
 

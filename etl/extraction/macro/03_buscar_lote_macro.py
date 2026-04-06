@@ -25,9 +25,9 @@ Chamado por:
   macro/macro/executar_automatico.py  (antes do túnel SSH)
 
 Uso manual:
-  python etl/load/macro/03_buscar_lote_macro.py
-  python etl/load/macro/03_buscar_lote_macro.py --tamanho 1000
-  python etl/load/macro/03_buscar_lote_macro.py --dry-run
+  python etl/extraction/macro/03_buscar_lote_macro.py
+  python etl/extraction/macro/03_buscar_lote_macro.py --tamanho 1000
+  python etl/extraction/macro/03_buscar_lote_macro.py --dry-run
 """
 
 import argparse
@@ -62,10 +62,11 @@ SEP = "=" * 70
 #      fique esperando indefinidamente)
 #   4. id ASC (desempate determinístico)
 #
-# LEFT JOIN em cliente_origem: funciona com ou sem a migração 001.
-# Sem a migração, co.fornecedor = NULL → COALESCE → trata como 'fornecedor2'.
+# Dois flavours de SQL: com e sem cliente_origem.
+# Se a melhoria 20260406 ainda não foi aplicada, a tabela não existe →
+# detectamos em runtime e usamos o SQL simples (todos tratados como fornecedor2).
 # ---------------------------------------------------------------------------
-SQL_BUSCAR_LOTE = """
+SQL_BUSCAR_LOTE_COM_ORIGEM = """
 SELECT
     tm.id                          AS macro_id,
     c.cpf                          AS cpf,
@@ -81,12 +82,47 @@ JOIN distribuidoras d  ON d.id  = tm.distribuidora_id
 LEFT JOIN cliente_origem co ON co.cliente_id = tm.cliente_id
 WHERE tm.status IN ('pendente', 'reprocessar')
 ORDER BY
-    (tm.status = 'pendente')                              DESC,  -- 1. pendente primeiro
-    (COALESCE(co.fornecedor, 'fornecedor2') = 'fornecedor2') DESC, -- 2. fornecedor2 primeiro
-    tm.data_update                                         ASC,  -- 3. mais antigo primeiro
-    tm.id                                                  ASC   -- 4. desempate
+    (tm.status = 'pendente')                              DESC,
+    (COALESCE(co.fornecedor, 'fornecedor2') = 'fornecedor2') DESC,
+    tm.data_update                                         ASC,
+    tm.id                                                  ASC
 LIMIT %s
 """
+
+# Fallback: sem JOIN em cliente_origem (melhoria 20260406 ainda não aplicada)
+SQL_BUSCAR_LOTE_SEM_ORIGEM = """
+SELECT
+    tm.id                          AS macro_id,
+    c.cpf                          AS cpf,
+    cu.uc                          AS `codigo cliente`,
+    d.nome                         AS empresa,
+    tm.status                      AS status_atual,
+    'fornecedor2'                  AS fornecedor
+FROM tabela_macros tm
+JOIN clientes       c  ON c.id  = tm.cliente_id
+JOIN cliente_uc     cu ON cu.cliente_id      = tm.cliente_id
+                       AND cu.distribuidora_id = tm.distribuidora_id
+JOIN distribuidoras d  ON d.id  = tm.distribuidora_id
+WHERE tm.status IN ('pendente', 'reprocessar')
+ORDER BY
+    (tm.status = 'pendente') DESC,
+    tm.data_update           ASC,
+    tm.id                    ASC
+LIMIT %s
+"""
+
+
+def _tabela_existe(conn, tabela: str) -> bool:
+    """Verifica se uma tabela existe no banco atual."""
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT COUNT(*) FROM information_schema.tables "
+        "WHERE table_schema = DATABASE() AND table_name = %s",
+        (tabela,)
+    )
+    existe = cur.fetchone()[0] > 0
+    cur.close()
+    return existe
 
 SQL_MARCAR_PROCESSANDO = """
 UPDATE tabela_macros
@@ -100,8 +136,16 @@ WHERE id IN ({placeholders})
 def buscar_lote(conn, tamanho: int, dry_run: bool) -> pd.DataFrame:
     cur = conn.cursor(pymysql.cursors.DictCursor)
 
+    # Detecta se a melhoria 20260406 já foi aplicada
+    if _tabela_existe(conn, "cliente_origem"):
+        sql = SQL_BUSCAR_LOTE_COM_ORIGEM
+    else:
+        print("  [AVISO] Tabela cliente_origem não encontrada — usando fallback (tudo como fornecedor2).")
+        print("          Execute db/improvements/20260406_cliente_origem_views_fornecedor/migration.py para ativar priorização por fornecedor.")
+        sql = SQL_BUSCAR_LOTE_SEM_ORIGEM
+
     print(f"  Consultando lote de até {tamanho:,} registros...")
-    cur.execute(SQL_BUSCAR_LOTE, (tamanho,))
+    cur.execute(sql, (tamanho,))
     rows = cur.fetchall()
 
     if not rows:
