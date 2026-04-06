@@ -9,23 +9,10 @@ __pycache__/
 .venv/
 venv/
 
+# Dados — NUNCA versionar (arquivos de clientes/operacional)
+dados/
+
 # Macro — ambiente virtual e arquivos transientes de lote
-macro/macro/.venv/
-macro/dados/lote_pendente.csv
-macro/dados/resultado_lote.csv
-macro/dados/lote_meta.json
-macro/dados/arquivo/
-
-# Dados brutos e processados
-dados/**/raw/
-dados/**/processed/
-dados/**/state/
-
-# Arquivos transientes da macro (gerados a cada ciclo — não versionar)
-macro/dados/lote_pendente.csv
-macro/dados/lote_meta.json
-macro/dados/resultado_lote.csv
-macro/dados/arquivo/
 
 # Logs
 *.log
