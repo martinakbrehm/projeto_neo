@@ -8,24 +8,24 @@
 ## 📊 Migrações/Importações de Dados Históricos
 
 ### 🔄 Fornecedor1 — Período até 2026-03-12
-**Status:** Dados importados, falta enriquecimento  
+**Status:** Não importado  
 **Local:** `etl/migration/fornecedor1/periodo_ate_20260312/`
 
-- ✅ **01_normalizar_historico.py** — Executado
-- ✅ **02_importar_historico_csv.py** — Executado
-- ❌ **03_enriquecer_clientes.py** — **PENDENTE**
-  - Arquivo: `etl/migration/fornecedor1/periodo_ate_20260312/03_enriquecer_clientes.py`
-  - Status: Falha na execução (Exit Code: 1)
-  - Próximo passo: Debugar e corrigir o script de enriquecimento
-  - Arquivo de progresso: `etl/migration/fornecedor1/periodo_ate_20260312/import_log.txt`
+- ❌ **Nenhum dado importado** — **PENDENTE**
+  - Status: Scripts existem mas não foram executados
+  - Próximo passo: Executar pipeline completo de migração do fornecedor1
 
 ### 🔄 Fornecedor2 — Período até 2026-03-12
-**Status:** Concluído  
+**Status:** Dados importados, falta enriquecimento  
 **Local:** `etl/migration/fornecedor2/periodo_ate_20260312/`
 
 - ✅ **01_normalizar_historico.py** — Executado
 - ✅ **02_importar_historico_csv.py** — Executado
-- ✅ **03_enriquecer_clientes.py** — Executado
+- ❌ **03_enriquecer_clientes.py** — **PENDENTE**
+  - Arquivo: `etl/migration/fornecedor2/periodo_ate_20260312/03_enriquecer_clientes.py`
+  - Status: Falha na execução (Exit Code: 1)
+  - Próximo passo: Debugar e corrigir o script de enriquecimento
+  - Arquivo de progresso: `etl/migration/fornecedor2/periodo_ate_20260312/import_log.txt`
 
 ### 🔄 Fornecedor2 — Período pós 2026-03-12
 **Status:** Pendente  
@@ -148,13 +148,16 @@
    - Seguir `macro/macro/CONFIGURACAO.md`
    - Testar túnel SSH
 
-4. **Corrigir migração fornecedor1:**
-   - Debugar `03_enriquecer_clientes.py`
+4. **Corrigir migração fornecedor2:**
+   - Debugar `03_enriquecer_clientes.py` (fornecedor2 período pré)
 
-5. **Implementar migração contatus:**
+5. **Implementar migração fornecedor1:**
+   - Executar pipeline completo em `etl/migration/fornecedor1/periodo_ate_20260312/`
+
+6. **Implementar migração contatus:**
    - Criar pipeline em `etl/migration/contatus/`
 
-6. **Implementar período pós fornecedor2:**
+7. **Implementar período pós fornecedor2:**
    - Criar pipeline em `etl/migration/fornecedor2/periodo_pos_20260312/`
 
 ---
