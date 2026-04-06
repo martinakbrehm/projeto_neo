@@ -1,7 +1,23 @@
-# Dependências para o script consulta_contrato.py
-requests>=2.31.0
-httpx>=0.25.0
-pandas>=2.0.0
-tqdm>=4.66.0
-openpyxl>=3.1.0
-python-dotenv>=1.0.0
+# Dependências do projeto macro — versões pinadas (gerado em 2026-04-06)
+# Para recriar o ambiente: python -m venv .venv && .venv\Scripts\pip install -r requirements.txt
+anyio==4.13.0
+certifi==2026.2.25
+charset-normalizer==3.4.7
+colorama==0.4.6
+et_xmlfile==2.0.0
+h11==0.16.0
+httpcore==1.0.9
+httpx==0.28.1
+idna==3.11
+numpy==2.4.4
+openpyxl==3.1.5
+pandas==3.0.2
+PyMySQL==1.1.2
+python-dateutil==2.9.0.post0
+python-dotenv==1.2.2
+requests==2.33.1
+six==1.17.0
+tqdm==4.67.3
+typing_extensions==4.15.0
+tzdata==2026.1
+urllib3==2.6.3

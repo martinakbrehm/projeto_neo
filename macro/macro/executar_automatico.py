@@ -4,7 +4,7 @@ Neo Energia - Orquestrador Automático  (executar_automatico.py)
 ===============================================================
 Coordenar todos os passos do ciclo de consulta automatizado:
 
-  PASSO 1  [ETL]    etl/load/macro/03_buscar_lote_macro.py
+  PASSO 1  [EXTRACT] etl/extraction/macro/03_buscar_lote_macro.py
                     → Busca lote priorizado do banco (fornecedor2 > contatus,
                       pendente > reprocessar), exporta macro/dados/lote_pendente.csv
 
@@ -41,6 +41,7 @@ load_dotenv()
 SSH_USER    = os.getenv("SSH_USER", "root")
 SSH_SERVER  = os.getenv("SSH_SERVER")
 SSH_PASSWORD= os.getenv("SSH_PASSWORD")
+SSH_HOST_KEY= os.getenv("SSH_HOST_KEY", "")  # fingerprint para plink -hostkey
 LOCAL_PORT  = int(os.getenv("LOCAL_PORT", 5000))
 REMOTE_HOST = os.getenv("REMOTE_HOST")
 REMOTE_PORT = int(os.getenv("REMOTE_PORT", 80))
@@ -49,11 +50,17 @@ REMOTE_PORT = int(os.getenv("REMOTE_PORT", 80))
 SCRIPT_DIR   = Path(__file__).parent
 # Caminhos — detecta SO para usar o executável correto do venv
 import platform as _platform
+import shutil as _shutil
 if _platform.system() == "Windows":
     PYTHON_EXE   = SCRIPT_DIR / ".venv" / "Scripts" / "python.exe"
 else:
     PYTHON_EXE   = SCRIPT_DIR / ".venv" / "bin" / "python"
 PYTHON_SCRIPT= SCRIPT_DIR / "consulta_contrato.py"
+
+# Python para scripts ETL (usa o Python do sistema, que tem pymysql/pandas
+# aprovados pelo AppLocker e as dependências do projeto principal)
+_system_python = _shutil.which("python") or _shutil.which("python3")
+ETL_PYTHON_EXE = Path(_system_python) if _system_python else PYTHON_EXE
 
 # Raíz do projeto (3 níveis acima de macro/macro/)
 PROJETO_DIR  = SCRIPT_DIR.parents[1]
@@ -63,7 +70,7 @@ LOTE_CSV     = SCRIPT_DIR.parent / "dados" / "lote_pendente.csv"
 RESULTADO_CSV= SCRIPT_DIR.parent / "dados" / "resultado_lote.csv"
 
 # Scripts ETL
-ETL_BUSCAR   = PROJETO_DIR / "etl" / "load" / "macro" / "03_buscar_lote_macro.py"
+ETL_BUSCAR   = PROJETO_DIR / "etl" / "extraction" / "macro" / "03_buscar_lote_macro.py"
 ETL_RETORNO  = PROJETO_DIR / "etl" / "load" / "macro" / "04_processar_retorno_macro.py"
 
 if not all([SSH_SERVER, SSH_PASSWORD, REMOTE_HOST]):
@@ -71,7 +78,10 @@ if not all([SSH_SERVER, SSH_PASSWORD, REMOTE_HOST]):
     print("Certifique-se de que o arquivo .env existe e contém:")
     print("SSH_SERVER, SSH_PASSWORD, REMOTE_HOST")
     sys.exit(1)
-
+if not SSH_HOST_KEY:
+    print("\u26a0\ufe0f  Aviso: SSH_HOST_KEY não configurada no .env")
+    print("   Plink pode falhar em modo batch. Execute uma vez interativamente para aceitar a chave.")
+    print("   Veja CONFIGURACAO.md para instruções.")
 IS_WINDOWS = _platform.system() == "Windows"
 
 
@@ -170,8 +180,12 @@ def check_tunnel_working():
 def _ssh_cmd_remoto(comando: str) -> list:
     """Retorna o comando para executar remotamente via SSH (Windows=plink, Linux=sshpass+ssh)."""
     if IS_WINDOWS:
-        return ["plink", "-batch", "-pw", SSH_PASSWORD,
-                f"{SSH_USER}@{SSH_SERVER}", comando]
+        cmd = ["plink", "-batch", "-pw", SSH_PASSWORD]
+        if SSH_HOST_KEY:
+            cmd += ["-hostkey", SSH_HOST_KEY]
+        cmd.append(f"{SSH_USER}@{SSH_SERVER}")
+        cmd.append(comando)
+        return cmd
     else:
         return ["sshpass", "-p", SSH_PASSWORD,
                 "ssh", "-o", "StrictHostKeyChecking=no",
@@ -216,6 +230,10 @@ def create_ssh_tunnel():
     if IS_WINDOWS:
         cmd = [
             "plink", "-batch", "-pw", SSH_PASSWORD,
+        ]
+        if SSH_HOST_KEY:
+            cmd += ["-hostkey", SSH_HOST_KEY]
+        cmd += [
             "-L", f"{LOCAL_PORT}:{REMOTE_HOST}:{REMOTE_PORT}",
             f"{SSH_USER}@{SSH_SERVER}", "-N"
         ]
@@ -380,17 +398,17 @@ def run_python_script():
 
 
 def run_etl_buscar_lote(tamanho: int = 2000) -> bool:
-    """PASSO 1 — ETL: busca lote priorizado e exporta CSV para a macro.
-    Script: etl/load/macro/03_buscar_lote_macro.py
+    """PASSO 1 — EXTRACT: busca lote priorizado e exporta CSV para a macro.
+    Script: etl/extraction/macro/03_buscar_lote_macro.py
     """
     print(f"\n🗔 [PASSO 1] Buscando lote do banco (tamanho={tamanho})...")
     if not ETL_BUSCAR.exists():
         print(f"❌ Script ETL não encontrado: {ETL_BUSCAR}")
         return False
     try:
-        # Usa o python do .venv para garantir as dependências
+        # Usa o Python do sistema (tem pymysql/pandas e é aprovado pelo AppLocker)
         result = subprocess.run(
-            [str(PYTHON_EXE), str(ETL_BUSCAR), "--tamanho", str(tamanho)],
+            [str(ETL_PYTHON_EXE), str(ETL_BUSCAR), "--tamanho", str(tamanho)],
             cwd=str(PROJETO_DIR),
             capture_output=False,
         )
@@ -424,7 +442,7 @@ def run_etl_processar_retorno() -> bool:
         return False
     try:
         result = subprocess.run(
-            [str(PYTHON_EXE), str(ETL_RETORNO)],
+            [str(ETL_PYTHON_EXE), str(ETL_RETORNO)],
             cwd=str(PROJETO_DIR),
             capture_output=False,
         )

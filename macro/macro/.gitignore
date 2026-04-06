@@ -1,4 +1,4 @@
-# Arquivos de ambiente e credenciais
+﻿# Arquivos de ambiente e credenciais
 .env
 *.env
 .env.local
@@ -54,7 +54,7 @@ venv.bak/
 *.log
 logs/
 
-# Arquivos temporários
+# Arquivos temporÃ¡rios
 *.tmp
 *.temp
 .DS_Store
@@ -65,11 +65,14 @@ Thumbs.db
 *.backup
 *.old
 
-# Arquivos específicos do projeto
+# Arquivos especÃ­ficos do projeto
 repo/10.219.11.156
 repo/neo_ssh_key*
+# Arquivos .bat: ignora temporarios, mantém scripts de setup/execução
 *.bat
+!EXECUTAR.bat
+!setup_venv.bat
 
-# Arquivos de configuração local
+# Arquivos de configuraÃ§Ã£o local
 config.local.*
 settings.local.*

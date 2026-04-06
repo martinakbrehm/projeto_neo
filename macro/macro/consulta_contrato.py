@@ -7,7 +7,7 @@ Esta é a etapa central do ciclo automatizado. Os scripts de suporte
 que integram este processo com o banco de dados são:
 
   ANTES   (alimenta esta macro):
-    etl/load/macro/03_buscar_lote_macro.py
+    etl/extraction/macro/03_buscar_lote_macro.py
       → busca lote priorizado do banco, exporta macro/dados/lote_pendente.csv
 
   APÓS    (processa o resultado desta macro):
