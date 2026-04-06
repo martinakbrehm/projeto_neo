@@ -1,0 +1,41 @@
+CONFIGURAÇÃO SSH AUTOMÁTICA - Neo Energia
+==========================================
+
+🎯 OBJETIVO: Executar o script SEM NUNCA mais digitar senha SSH!
+
+📋 PASSOS SIMPLES:
+
+1. Execute APENAS UMA VEZ:
+   ► configurar_ssh_automatico.bat
+   
+   Isso vai:
+   - Criar chave SSH automática
+   - Copiar para o servidor (ÚLTIMA VEZ que vai pedir senha!)
+   - Configurar tudo para automação
+
+2. Depois use SEMPRE:
+   ► executar_automatico.bat
+   
+   Que vai executar TUDO automaticamente:
+   - Conecta SSH sem senha
+   - Cria túnel sem senha  
+   - Executa Python
+   - Limpa conexões
+
+🔧 OU PELO MENU PRINCIPAL:
+   ► script_master.bat
+   
+   Opção 2: Configurar SSH AUTOMATICO (execute UMA VEZ)
+   Opção 4, 5, 6: Execução automática (sem senha)
+
+✅ RESULTADO:
+   - ZERO interação manual
+   - ZERO digitação de senha
+   - Execução completamente automática
+
+⚠️ IMPORTANTE:
+   - Configure UMA VEZ (opção 2)
+   - Depois use sempre as opções 4, 5, 6
+   - NUNCA mais vai pedir senha!
+
+🎉 Automação 100% completa para Neo Energia!
