@@ -73,6 +73,23 @@ WHERE id IN ({placeholders})
   AND status = 'processando'
 """
 
+# Limpeza global: registros 'processando' que não estão no lote atual
+# (órfãos de ciclos anteriores interrompidos — dry-run, crash, etc.)
+SQL_LIMPAR_ORFAOS = """
+UPDATE tabela_macros
+SET status      = 'reprocessar',
+    data_update = NOW()
+WHERE status = 'processando'
+  AND id NOT IN ({placeholders})
+"""
+
+SQL_LIMPAR_TODOS_ORFAOS = """
+UPDATE tabela_macros
+SET status      = 'reprocessar',
+    data_update = NOW()
+WHERE status = 'processando'
+"""
+
 
 def carregar_meta() -> dict:
     if not LOTE_META.exists():
@@ -189,6 +206,17 @@ def processar(conn, df_resultado: pd.DataFrame, meta: dict, dry_run: bool) -> di
             )
             conn.commit()
             print(f"  [OK] {cur.rowcount:,} registros devolvidos para 'reprocessar' (macro interrompida)")
+
+    # Limpeza global: órfãos de ciclos anteriores (dry-run, crash, etc.)
+    if not dry_run:
+        if ids_no_lote:
+            ph = ",".join(["%s"] * len(ids_no_lote))
+            cur.execute(SQL_LIMPAR_ORFAOS.format(placeholders=ph), list(ids_no_lote))
+        else:
+            cur.execute(SQL_LIMPAR_TODOS_ORFAOS)
+        if cur.rowcount:
+            print(f"  [OK] {cur.rowcount:,} registros 'processando' órfãos (ciclos anteriores) → 'reprocessar'")
+        conn.commit()
 
     cur.close()
     return stats
