@@ -1,0 +1,217 @@
+======================================================================
+DISCOVERY — Índices e estrutura do banco de destino
+Executado em: 2026-04-07 15:13:21
+======================================================================
+
+----------------------------------------------------------------------
+1. CONTAGEM DE LINHAS
+----------------------------------------------------------------------
+  clientes                            130,268 linhas
+  cliente_uc                          138,486 linhas
+  cliente_origem                      130,268 linhas
+  tabela_macros                       136,340 linhas
+  telefones                           265,995 linhas
+  enderecos                            73,283 linhas
+  staging_imports                           4 linhas
+  staging_import_rows                 132,717 linhas
+  respostas                                12 linhas
+  distribuidoras                            4 linhas
+
+----------------------------------------------------------------------
+2. ÍNDICES POR TABELA (SHOW INDEX)
+----------------------------------------------------------------------
+
+  >>> clientes
+    [UNIQUE] PRIMARY  (BTREE)
+      seq=1  col=id
+    [UNIQUE] ux_clientes_cpf  (BTREE)
+      seq=1  col=cpf
+    [INDEX] idx_clientes_nome  (BTREE)
+      seq=1  col=nome
+
+  >>> cliente_uc
+    [UNIQUE] PRIMARY  (BTREE)
+      seq=1  col=id
+    [UNIQUE] ux_cliente_uc  (BTREE)
+      seq=1  col=cliente_id
+      seq=2  col=uc
+      seq=3  col=distribuidora_id
+    [INDEX] distribuidora_id  (BTREE)
+      seq=1  col=distribuidora_id
+    [INDEX] idx_cliente_uc_cliente_distrib_uc  (BTREE)
+      seq=1  col=cliente_id
+      seq=2  col=distribuidora_id
+      seq=3  col=uc
+    [INDEX] idx_cliente_uc_uc  (BTREE)
+      seq=1  col=uc
+
+  >>> cliente_origem
+    [UNIQUE] PRIMARY  (BTREE)
+      seq=1  col=id
+    [UNIQUE] ux_cliente_fornecedor  (BTREE)
+      seq=1  col=cliente_id
+      seq=2  col=fornecedor
+
+  >>> tabela_macros
+    [UNIQUE] PRIMARY  (BTREE)
+      seq=1  col=id
+    [INDEX] idx_tabela_macros_status_data_cliente_distrib  (BTREE)
+      seq=1  col=status
+      seq=2  col=data_update
+      seq=3  col=cliente_id
+      seq=4  col=distribuidora_id
+    [INDEX] idx_tabela_macros_cliente_distrib_data  (BTREE)
+      seq=1  col=cliente_id
+      seq=2  col=distribuidora_id
+      seq=3  col=data_update
+    [INDEX] idx_tabela_macros_extraido_status_data  (BTREE)
+      seq=1  col=extraido
+      seq=2  col=status
+      seq=3  col=data_update
+    [INDEX] idx_tabela_macros_distrib_data_evento  (BTREE)
+      seq=1  col=distribuidora_id
+      seq=2  col=data_update
+    [INDEX] idx_tabela_macros_status_cliente_update  (BTREE)
+      seq=1  col=status
+      seq=2  col=cliente_id
+      seq=3  col=data_update
+    [INDEX] idx_tabela_macros_resposta  (BTREE)
+      seq=1  col=resposta_id
+    [INDEX] idx_tabela_macros_data_extracao  (BTREE)
+      seq=1  col=data_extracao
+
+  >>> telefones
+    [UNIQUE] PRIMARY  (BTREE)
+      seq=1  col=id
+    [INDEX] idx_telefones_cliente  (BTREE)
+      seq=1  col=cliente_id
+    [INDEX] idx_telefones_numero  (BTREE)
+      seq=1  col=telefone
+
+  >>> enderecos
+    [UNIQUE] PRIMARY  (BTREE)
+      seq=1  col=id
+    [INDEX] idx_enderecos_cliente  (BTREE)
+      seq=1  col=cliente_id
+    [INDEX] fk_enderecos_distribuidora  (BTREE)
+      seq=1  col=distribuidora_id
+    [INDEX] fk_enderecos_cliente_uc  (BTREE)
+      seq=1  col=cliente_uc_id
+
+  >>> staging_imports
+    [UNIQUE] PRIMARY  (BTREE)
+      seq=1  col=id
+    [INDEX] idx_staging_status  (BTREE)
+      seq=1  col=status
+    [INDEX] idx_staging_created_at  (BTREE)
+      seq=1  col=created_at
+
+  >>> staging_import_rows
+    [UNIQUE] PRIMARY  (BTREE)
+      seq=1  col=id
+    [INDEX] idx_staging_rows_staging  (BTREE)
+      seq=1  col=staging_id
+    [INDEX] idx_staging_rows_normcpf  (BTREE)
+      seq=1  col=normalized_cpf
+
+  >>> respostas
+    [UNIQUE] PRIMARY  (BTREE)
+      seq=1  col=id
+
+  >>> distribuidoras
+    [UNIQUE] PRIMARY  (BTREE)
+      seq=1  col=id
+    [UNIQUE] nome  (BTREE)
+      seq=1  col=nome
+
+----------------------------------------------------------------------
+3. EXPLAIN DAS QUERIES CRÍTICAS DOS PIPELINES
+----------------------------------------------------------------------
+
+  >>> 02_processar_staging — SELECT linhas válidas pendentes por staging_id
+      SQL: EXPLAIN SELECT row_idx, normalized_cpf FROM staging_import_rows WHERE staging_id=1 AND validation_status='valid' AND pro...
+      table=staging_import_rows       type=ALL        key=idx_staging_rows_staging                           rows=const
+      Extra: 65694
+
+  >>> 02_processar_staging — UPDATE batch de processed_at por row_idx
+      SQL: EXPLAIN SELECT id FROM staging_import_rows WHERE staging_id=1 AND row_idx IN (1,2,3,4,5)...
+      table=staging_import_rows       type=ALL        key=idx_staging_rows_staging                           rows=const
+      Extra: 65694
+
+  >>> 02_processar_staging — carregar_maps: dedup macros hoje por data_criacao
+      SQL: EXPLAIN SELECT cliente_id, distribuidora_id FROM tabela_macros WHERE DATE(data_criacao) = CURDATE()...
+      table=tabela_macros             type=ALL        key=NENHUM                                             rows=? *** FULL SCAN ***
+      Extra: 136847
+
+  >>> 02_processar_staging — carregar_maps: todos clientes (cpf -> id)
+      SQL: EXPLAIN SELECT id, cpf FROM clientes...
+      table=clientes                  type=ALL        key=NENHUM                                             rows=? *** FULL SCAN ***
+      Extra: 122664
+
+  >>> 02_processar_staging — carregar_maps: todas as UCs
+      SQL: EXPLAIN SELECT id, cliente_id, uc, distribuidora_id FROM cliente_uc...
+      table=cliente_uc                type=ALL        key=NENHUM                                             rows=? *** FULL SCAN ***
+      Extra: 138708
+
+  >>> 02_processar_staging — carregar_maps: todos os telefones
+      SQL: EXPLAIN SELECT cliente_id, telefone FROM telefones WHERE telefone IS NOT NULL...
+      table=telefones                 type=ALL        key=idx_telefones_numero                               rows=?
+      Extra: 265970
+
+  >>> 02_processar_staging — carregar_maps: todos os enderecos
+      SQL: EXPLAIN SELECT cliente_uc_id, COALESCE(cep,'') FROM enderecos...
+      table=enderecos                 type=ALL        key=NENHUM                                             rows=? *** FULL SCAN ***
+      Extra: 73343
+
+  >>> 02_processar_staging — INSERT IGNORE cliente_uc (inline SELECT fallback)
+      SQL: EXPLAIN SELECT id FROM cliente_uc WHERE cliente_id=1 AND uc='0000000001' AND distribuidora_id=3...
+      table=-                         type=ALL        key=NENHUM                                             rows=? *** FULL SCAN ***
+
+  >>> 04_processar_retorno_macro — SELECT lote pendente/reprocessar com JOIN
+      SQL: EXPLAIN SELECT tm.id, c.cpf, cu.uc, tm.distribuidora_id FROM tabela_macros tm JOIN clientes c ON c.id = tm.cliente_id JO...
+      table=tm                        type=ALL        key=idx_tabela_macros_status_data_cliente_distrib,idx_tabela_macros_cliente_distrib_data,idx_tabela_macros_distrib_data_evento,idx_tabela_macros_status_cliente_update rows=?
+      Extra: 311
+      table=c                         type=ALL        key=PRIMARY                                            rows=bd_Automacoes_time_dadosV2.tm.cliente_id
+      Extra: 1
+      table=cu                        type=ALL        key=ux_cliente_uc,distribuidora_id,idx_cliente_uc_cliente_distrib_uc rows=bd_Automacoes_time_dadosV2.tm.cliente_id,bd_Automacoes_time_dadosV2.tm.distribuidora_id
+      Extra: 1
+
+  >>> 04_processar_retorno_macro — UPDATE status por id
+      SQL: EXPLAIN SELECT id FROM tabela_macros WHERE id=1...
+      table=tabela_macros             type=ALL        key=PRIMARY                                            rows=const
+      Extra: 1
+
+  >>> executar_automatico — SELECT pendente/reprocessar LIMIT N
+      SQL: EXPLAIN SELECT tm.id, c.cpf, cu.uc, d.nome FROM tabela_macros tm JOIN clientes c ON c.id = tm.cliente_id JOIN cliente_uc...
+      table=tm                        type=ALL        key=idx_tabela_macros_status_data_cliente_distrib,idx_tabela_macros_cliente_distrib_data,idx_tabela_macros_distrib_data_evento,idx_tabela_macros_status_cliente_update rows=?
+      Extra: 95106
+      table=d                         type=ALL        key=PRIMARY                                            rows=bd_Automacoes_time_dadosV2.tm.distribuidora_id
+      Extra: 1
+      table=c                         type=ALL        key=PRIMARY                                            rows=bd_Automacoes_time_dadosV2.tm.cliente_id
+      Extra: 1
+      table=cu                        type=ALL        key=ux_cliente_uc,distribuidora_id,idx_cliente_uc_cliente_distrib_uc rows=bd_Automacoes_time_dadosV2.tm.cliente_id,bd_Automacoes_time_dadosV2.tm.distribuidora_id
+      Extra: 1
+
+  >>> staging_imports — SELECT pendentes para processar
+      SQL: EXPLAIN SELECT id, filename, distribuidora_nome FROM staging_imports WHERE status='pending' ORDER BY created_at...
+      table=staging_imports           type=ALL        key=idx_staging_status                                 rows=const
+      Extra: 1
+
+  >>> cliente_origem — INSERT/check por cliente_id+fornecedor
+      SQL: EXPLAIN SELECT id FROM cliente_origem WHERE cliente_id=1 AND fornecedor='fornecedor2'...
+      table=cliente_origem            type=ALL        key=ux_cliente_fornecedor                              rows=const,const
+      Extra: 1
+
+----------------------------------------------------------------------
+4. ESTADO DA STAGING
+----------------------------------------------------------------------
+  id=1  status=completed    total=35000  ok=35000  file=35K_20260402_CELP.csv
+  id=2  status=completed    total=35000  ok=35000  file=35K_20260402_COELBA.csv
+  id=3  status=completed    total=35000  ok=35000  file=35K_20260402_COSERN.csv
+  id=4  status=completed    total=27717  ok=27717  file=celpe_final_3103.xlsx
+
+  staging_import_rows por staging_id + validation_status:
+    staging_id=1  status=valid       pendentes=12500  total=35000
+    staging_id=2  status=valid       pendentes=35000  total=35000
+    staging_id=3  status=valid       pendentes=35000  total=35000
+    staging_id=4  status=valid       pendentes=27717  total=27717
