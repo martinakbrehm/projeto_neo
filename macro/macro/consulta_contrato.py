@@ -227,6 +227,12 @@ class ConsultaContratoAsync:
         self.linha_inicial = 0
         self.contador_processados = 0
 
+        # Auto-reconexão: detecta rajadas de erros de conexão e reinicia o túnel
+        self.erros_consecutivos = 0       # incrementa a cada erro de conexão, zera no sucesso
+        self._pedir_reconexao = False     # flag setada pelo consultar_linha_rapida
+        self.reconexoes_realizadas = 0    # contador de reconexões (para log)
+        self.LIMITE_RECONECTAR = 10       # erros consecutivos que disparam reconexão
+
         # Janela de controle
         self.janela_controle = JanelaControle()
 
@@ -240,6 +246,80 @@ class ConsultaContratoAsync:
             return resultado == 0
         except Exception:
             return False
+
+    def _reconectar_tunel(self):
+        """Mata o plink atual e reinicia o túnel SSH.
+        Chamado automaticamente quando erros_consecutivos >= LIMITE_RECONECTAR.
+        """
+        from dotenv import load_dotenv
+        import platform
+        load_dotenv()
+
+        self.reconexoes_realizadas += 1
+        print(f"\n🔄 [RECONEXÃO #{self.reconexoes_realizadas}] "
+              f"{self.erros_consecutivos} erros consecutivos — reiniciando túnel SSH...")
+        self.janela_controle.atualizar_status(
+            f"⚠️ Reconectando túnel... (#{self.reconexoes_realizadas})")
+
+        is_windows = platform.system() == "Windows"
+        script_dir = os.path.dirname(__file__)
+
+        # Encerra processo SSH atual
+        if is_windows:
+            subprocess.run(["taskkill", "/IM", "plink.exe", "/F"], capture_output=True)
+        else:
+            subprocess.run(["pkill", "-f", "ssh.*5000"], capture_output=True)
+        time.sleep(2)
+
+        # Lê credenciais do .env
+        ssh_user     = os.getenv("SSH_USER", "root")
+        ssh_server   = os.getenv("SSH_SERVER")
+        ssh_password = os.getenv("SSH_PASSWORD")
+        ssh_host_key = os.getenv("SSH_HOST_KEY", "")
+        local_port   = int(os.getenv("LOCAL_PORT", 5000))
+        remote_host  = os.getenv("REMOTE_HOST")
+        remote_port  = int(os.getenv("REMOTE_PORT", 80))
+
+        if not all([ssh_server, ssh_password, remote_host]):
+            print("  [AVISO] Variáveis SSH não encontradas no .env — reconexão abortada")
+            self.erros_consecutivos = 0
+            self._pedir_reconexao = False
+            return
+
+        # Monta comando plink (Windows) ou sshpass+ssh (Linux)
+        if is_windows:
+            plink = os.path.join(script_dir, "plink.exe")
+            if not os.path.exists(plink):
+                plink = "plink"
+            cmd = [plink, "-batch", "-pw", ssh_password]
+            if ssh_host_key:
+                cmd += ["-hostkey", ssh_host_key]
+            cmd += ["-L", f"{local_port}:{remote_host}:{remote_port}",
+                    f"{ssh_user}@{ssh_server}", "-N"]
+            kwargs = {"creationflags": subprocess.CREATE_NO_WINDOW}
+        else:
+            cmd = ["sshpass", "-p", ssh_password,
+                   "ssh", "-N", "-o", "StrictHostKeyChecking=no",
+                   "-L", f"{local_port}:{remote_host}:{remote_port}",
+                   f"{ssh_user}@{ssh_server}"]
+            kwargs = {}
+
+        try:
+            subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL, **kwargs)
+            print("  Túnel reiniciado — aguardando estabilização (5s)...")
+            time.sleep(5)
+            if self.verificar_tunel_ssh():
+                print(f"  ✅ Túnel ativo na porta {local_port} — retomando processamento")
+                self.janela_controle.atualizar_status(
+                    f"✅ Reconectado! ({self.reconexoes_realizadas}x)")
+            else:
+                print("  ⚠️ Túnel não confirmado — continuando assim mesmo")
+        except Exception as e:
+            print(f"  [ERRO] Falha ao reiniciar túnel: {e}")
+
+        self.erros_consecutivos = 0
+        self._pedir_reconexao = False
 
     def iniciar_tunel_automatico(self):
         """Tenta iniciar o túnel SSH automaticamente"""
@@ -574,10 +654,10 @@ class ConsultaContratoAsync:
                         self.contador_processados += 1
                         return
                 
-                # ⚡ RESULTADO NORMAL: Resposta válida
+                # ✅ Resultado normal: resposta válida
                 resultado = [cpf, contrato, empresa, resposta_bruta]
                 self.resultados.append(resultado)
-                
+                self.erros_consecutivos = 0  # sucesso — zera contador
                 self.contador_processados += 1
                 
                 # ⚡ SALVA EM LOTES DE 1000 para máxima performance
@@ -620,6 +700,7 @@ class ConsultaContratoAsync:
                     
                     self.resultados.append(resultado)
                     self.contador_processados += 1
+                    self.erros_consecutivos = 0  # 2ª tentativa teve sucesso
                     
                     if len(self.resultados) >= 1000:
                         self.salvar_resultados_em_lote()
@@ -628,26 +709,30 @@ class ConsultaContratoAsync:
                     
                 except httpx.ReadTimeout:
                     print(f"❌ [Linha {linha_display}] Timeout final (>8s) - Desistindo")
-
-                    # ❌ TIMEOUT FINAL: Marca como timeout definitivo
                     resultado_timeout = [cpf, contrato, empresa, "TIMEOUT_FINAL"]
                     self.resultados.append(resultado_timeout)
                     self.contador_processados += 1
+                    # timeout não é erro de conexão — não incrementa contador de reconexão
                     
                 except Exception as e:
                     print(f"❌ [Linha {linha_display}] Erro na 2ª tentativa: {type(e).__name__}")
-                    
                     resultado_erro = [cpf, contrato, empresa, f"ERRO_RETRY: {type(e).__name__}"]
                     self.resultados.append(resultado_erro)
                     self.contador_processados += 1
+                    self.erros_consecutivos += 1
+                    if self.erros_consecutivos >= self.LIMITE_RECONECTAR:
+                        print(f"⚠️ [{linha_display}] Limite de erros atingido ({self.erros_consecutivos}) — reconexão solicitada")
+                        self._pedir_reconexao = True
                 
             except Exception as e:
                 print(f"❌ [Linha {linha_display}] Erro: {type(e).__name__}")
-                
-                # ⚡ ERRO SIMPLES: Apenas marca como erro (sem retry para outros erros)
                 resultado_erro = [cpf, contrato, empresa, f"ERRO: {type(e).__name__}"]
                 self.resultados.append(resultado_erro)
                 self.contador_processados += 1
+                self.erros_consecutivos += 1
+                if self.erros_consecutivos >= self.LIMITE_RECONECTAR:
+                    print(f"⚠️ [{linha_display}] Limite de erros atingido ({self.erros_consecutivos}) — reconexão solicitada")
+                    self._pedir_reconexao = True
 
     async def consultar_cadastro(self):
         """Método principal.
@@ -697,130 +782,134 @@ class ConsultaContratoAsync:
             self.janela_controle.fechar_janela()
     
     async def _processar_rapido(self, df):
-        """Processamento ultra rápido — lê CSV (automático) ou Excel (manual)."""
+        """Processamento assíncrono com auto-reconexão SSH.
 
-        # Limpa colunas
+        Detecta rajadas de erros de conexão e reinicia o túnel automaticamente,
+        retomando do ponto exato onde parou (self.linha_inicial).
+        """
         df.columns = df.columns.str.strip()
-        print(f"📋 Colunas: {list(df.columns)}")
+        print(f"\U0001f4cb Colunas: {list(df.columns)}")
 
-        # Verifica colunas obrigatórias
         colunas_esperadas = {"codigo cliente", "cpf", "empresa"}
         if not colunas_esperadas.issubset(df.columns):
-            print(f"❌ Colunas inválidas. Esperadas: {colunas_esperadas}")
+            print(f"\u274c Colunas inválidas. Esperadas: {colunas_esperadas}")
             return
 
-        # 🔍 DEBUG: Mostra algumas linhas da planilha para verificação
-        print(f"\n🔍 VERIFICAÇÃO DOS DADOS DA PLANILHA:")
-        print(f"📊 Primeiras 3 linhas da planilha:")
+        print(f"\n\U0001f50d VERIFICAÇÃO DOS DADOS:")
         for i in range(min(3, len(df))):
             linha = df.iloc[i]
-            cpf_exemplo = self.padronizar_cpf_cnpj(linha["cpf"])
-            contrato_exemplo = self.padronizar_contrato(linha["codigo cliente"])  # 🔧 CORREÇÃO: Mostra contrato tratado
-            print(f"   Linha {i+2}: CPF={cpf_exemplo}, Contrato ORIGINAL={linha['codigo cliente']}, Contrato TRATADO={contrato_exemplo}, Empresa={linha['empresa']}")
+            print(f"   Linha {i+2}: CPF={self.padronizar_cpf_cnpj(linha['cpf'])}, "
+                  f"Contrato={self.padronizar_contrato(linha['codigo cliente'])}, "
+                  f"Empresa={linha['empresa']}")
         print()
 
-        # ⚡ TIMEOUT AJUSTADO para reduzir timeouts
-        timeout_config = httpx.Timeout(
-            connect=4.0,
-            read=4.0,
-            write=3.0,
-            pool=3.0
-        )
-        
-        # ⚡ SEMÁFORO: 5 consultas simultâneas
+        timeout_config = httpx.Timeout(connect=4.0, read=4.0, write=3.0, pool=3.0)
         self.semaforo = asyncio.Semaphore(self.limite_concorrencia)
-        
-        async with httpx.AsyncClient(timeout=timeout_config) as client:
-            
-            try:
-                total_linhas = len(df)
-                linhas_para_processar = df.iloc[self.linha_inicial:]
-                
-                print(f"📊 Total: {total_linhas} linhas")
-                print(f"🔄 Processando: {len(linhas_para_processar)} linhas")
-                print(f"⚡ Concorrência: {self.limite_concorrencia} consultas simultâneas")
-                print(f"⏱️ Timeout: 4s por consulta (8s na 2ª tentativa)")
-                print(f"🔄 Retry automático: Sim (para timeouts)")
-                print(f"💾 Salvamento: A cada 1000 resultados")
-                print(f"📋 Colunas resultado: cpf, codigo_cliente, empresa, resposta")
-                print()
-                
-                # 🕐 INICIA CRONÔMETRO PARA TEMPO REAL
-                self.janela_controle.iniciar_cronometro()
-                
-                # � ATUALIZAÇÃO INICIAL: Mostra que vai começar o primeiro lote
-                self.janela_controle.atualizar_informacoes_tempo_real(lote_atual=0, total_processadas=0)
-                
-                # ⚡ PROCESSAMENTO EM LOTES ASSÍNCRONOS
+
+        # Loop de reconexão: reinicia túnel e retoma quando _pedir_reconexao=True
+        while True:
+            self._pedir_reconexao = False
+            linhas_para_processar = df.iloc[self.linha_inicial:]
+
+            if linhas_para_processar.empty:
+                break
+
+            print(f"\U0001f4ca Total: {len(df)} | Retomando em: {self.linha_inicial} | "
+                  f"Reconexões: {self.reconexoes_realizadas} | "
+                  f"Concorrência: {self.limite_concorrencia} | "
+                  f"Limite reconectar: {self.LIMITE_RECONECTAR} erros")
+
+            self.janela_controle.iniciar_cronometro()
+            self.janela_controle.atualizar_informacoes_tempo_real(
+                lote_atual=0, total_processadas=self.contador_processados)
+
+            async with httpx.AsyncClient(timeout=timeout_config) as client:
                 tasks = []
-                lote_contador = 0  # Contador de lotes processados
-                for idx, (_, row) in enumerate(linhas_para_processar.iterrows()):
-                    
-                    # 🛑 VERIFICA PARADA COM MAIS FREQUÊNCIA
-                    if self.janela_controle.parar_processo:
-                        print(f"\n⏸️ Parado pelo usuário na linha {idx + 2}")
-                        break
-                    
-                    if self.janela_controle.encerrar_aplicacao:
-                        print(f"\n❌ Encerrando aplicação...")
-                        sys.exit(0)
-                    
-                    contrato = self.padronizar_contrato(row["codigo cliente"])  # 🔧 CORREÇÃO: Remove .0
-                    cpf = self.padronizar_cpf_cnpj(row["cpf"])
-                    empresa = row["empresa"]
-                    linha_display = idx + 2
-                    
-                    # Atualiza status e informações em tempo real
-                    if idx % 10 == 0:  # Atualiza a cada 10 linhas para ser mais responsivo
-                        self.janela_controle.atualizar_status(f"🔄 Processando lote {lote_contador + 1}...")
-                        self.janela_controle.atualizar_informacoes_tempo_real(lote_atual=lote_contador, total_processadas=self.contador_processados)
-                        
-                        # 🛑 VERIFICA PARADA DURANTE ATUALIZAÇÕES
-                        if self.janela_controle.parar_processo or self.janela_controle.encerrar_aplicacao:
+                lote_contador = 0
+                linhas_nesta_rodada = 0
+
+                try:
+                    for idx, (_, row) in enumerate(linhas_para_processar.iterrows()):
+
+                        if self.janela_controle.parar_processo:
+                            print(f"\n\u23f8\ufe0f Parado pelo usuário")
                             break
-                    
-                    # ⚡ CRIA TASK ASSÍNCRONA
-                    task = self.consultar_linha_rapida(cpf, contrato, empresa, linha_display, client)
-                    tasks.append(task)
-                    
-                    # ⚡ PROCESSA EM LOTES DE 50 PARA CONTROLE
-                    if len(tasks) >= 50:
+                        if self.janela_controle.encerrar_aplicacao:
+                            sys.exit(0)
+
+                        contrato      = self.padronizar_contrato(row["codigo cliente"])
+                        cpf           = self.padronizar_cpf_cnpj(row["cpf"])
+                        empresa       = row["empresa"]
+                        linha_display = self.linha_inicial + idx + 2
+
+                        if idx % 10 == 0:
+                            self.janela_controle.atualizar_status(
+                                f"\U0001f504 Lote {lote_contador + 1}...")
+                            self.janela_controle.atualizar_informacoes_tempo_real(
+                                lote_atual=lote_contador,
+                                total_processadas=self.contador_processados)
+                            if self.janela_controle.parar_processo or \
+                               self.janela_controle.encerrar_aplicacao:
+                                break
+
+                        tasks.append(self.consultar_linha_rapida(
+                            cpf, contrato, empresa, linha_display, client))
+                        linhas_nesta_rodada += 1
+
+                        if len(tasks) >= 50:
+                            await asyncio.gather(*tasks, return_exceptions=True)
+                            tasks = []
+                            lote_contador += 1
+                            print(f"\u26a1 Lote {lote_contador} | Total: {self.contador_processados} "
+                                  f"| Erros consec.: {self.erros_consecutivos}")
+                            self.janela_controle.atualizar_informacoes_tempo_real(
+                                lote_atual=lote_contador,
+                                total_processadas=self.contador_processados)
+
+                            # ---- Auto-reconexão ----
+                            if self._pedir_reconexao:
+                                self.linha_inicial += linhas_nesta_rodada
+                                print(f"\u26a0\ufe0f Reconexão solicitada. Retomando em linha {self.linha_inicial}")
+                                break
+
+                            if self.janela_controle.parar_processo or \
+                               self.janela_controle.encerrar_aplicacao:
+                                break
+
+                    # Lote final (tasks restantes)
+                    if not self._pedir_reconexao and tasks and \
+                       not self.janela_controle.parar_processo and \
+                       not self.janela_controle.encerrar_aplicacao:
+                        lote_contador += 1
+                        print(f"\u26a1 Lote final {lote_contador} ({len(tasks)} tasks)")
                         await asyncio.gather(*tasks, return_exceptions=True)
-                        tasks = []
-                        lote_contador += 1  # Incrementa contador de lote
-                        print(f"⚡ Lote {lote_contador} processado - Total: {self.contador_processados}")
-                        # Atualiza informações em tempo real após cada lote
-                        self.janela_controle.atualizar_informacoes_tempo_real(lote_atual=lote_contador, total_processadas=self.contador_processados)
-                        
-                        # 🛑 VERIFICA PARADA APÓS CADA LOTE
-                        if self.janela_controle.parar_processo or self.janela_controle.encerrar_aplicacao:
-                            break
-                
-                # Processa tasks restantes
-                if tasks and not self.janela_controle.parar_processo and not self.janela_controle.encerrar_aplicacao:
-                    lote_contador += 1  # Incrementa para o lote final
-                    print(f"⚡ Processando lote final {lote_contador} com {len(tasks)} tasks restantes...")
-                    await asyncio.gather(*tasks, return_exceptions=True)
-                    # Atualiza para o lote final
-                    self.janela_controle.atualizar_informacoes_tempo_real(lote_atual=lote_contador, total_processadas=self.contador_processados)
-                
-            except KeyboardInterrupt:
-                print("\n⛔ Interrompido pelo usuário")
-                
-            finally:
-                # ⚡ SALVA RESULTADOS FINAIS
-                print(f"\n💾 Salvando resultados finais...")
-                if self.salvar_resultados_finais():
-                    print(f"✅ Todos os resultados salvos!")
-                    self.janela_controle.atualizar_status("✅ Resultados salvos!")
-                
-                print(f"\n📊 ESTATÍSTICAS FINAIS:")
-                print(f"   • Total processado: {self.contador_processados} linhas")
-                print(f"   • Concorrência: {self.limite_concorrencia} simultâneas")
-                print(f"   • Timeout: 4s (8s na 2ª tentativa)")
-                print(f"   • Retry automático: Ativo para timeouts")
-                print(f"   • Tratamento SAP: Ativo para limite de conexões")
-                print(f"   • Formato: Resposta bruta da API")
+                        self.janela_controle.atualizar_informacoes_tempo_real(
+                            lote_atual=lote_contador,
+                            total_processadas=self.contador_processados)
+
+                except KeyboardInterrupt:
+                    print("\n\u26d4 Interrompido pelo usuário")
+
+                finally:
+                    # Salva buffer em memória (parcial na reconexão, ou final)
+                    if self.resultados:
+                        print(f"\n\U0001f4be Salvando {len(self.resultados)} resultados...")
+                        self.salvar_resultados_finais()
+                        self.janela_controle.atualizar_status("\u2705 Resultados salvos!")
+
+            # Saiu do async with: conexões antigas fechadas
+            if self._pedir_reconexao:
+                self._reconectar_tunel()
+                continue  # nova iteração com novo AsyncClient e nova posição
+            else:
+                break  # processamento concluído
+
+        print(f"\n\U0001f4ca ESTATÍSTICAS FINAIS:")
+        print(f"   \u2022 Total processado  : {self.contador_processados} linhas")
+        print(f"   \u2022 Reconexões SSH    : {self.reconexoes_realizadas}")
+        print(f"   \u2022 Concorrência      : {self.limite_concorrencia} simultâneas")
+        print(f"   \u2022 Retry timeout     : ativo (2\u00aa tentativa 8s)")
+        print(f"   \u2022 Auto-reconexão    : ativo após {self.LIMITE_RECONECTAR} erros consecutivos")
 
 
 if __name__ == "__main__":
