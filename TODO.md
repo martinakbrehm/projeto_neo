@@ -43,40 +43,35 @@
 
 ## 🛠️ Melhorias no Banco de Dados
 
-### 🔄 Identificação de Fornecedor (cliente_origem + views)
-**Status:** Scripts criados, pendente execução  
+### ✅ Identificação de Fornecedor (cliente_origem + views)
+**Status:** Concluído (2026-04-07)  
 **Local:** `db/improvements/20260406_cliente_origem_views_fornecedor/`
 
-- ✅ **migration.py** — Criado
-- ✅ **README.md** — Criado
-- ❌ **Execução da melhoria** — **PENDENTE**
-  - Comando: `python db/improvements/20260406_cliente_origem_views_fornecedor/migration.py`
-  - Impacto: Adiciona tabela `cliente_origem`, corrige unique key de `cliente_uc`, cria 12 views por fornecedor
-  - ⚠️ **Executar migration e alterações de código juntos (passo 1 e 2 abaixo são atômicos)**
-  - Próximo passo: Executar com `--dry-run` primeiro, depois aplicar
-
-- ❌ **Alterações de código pós-migração** — **PENDENTE** *(aplicar junto com a melhoria)*
-  - Arquivo: `etl/load/macro/02_processar_staging.py`
-    - [Linha 168](etl/load/macro/02_processar_staging.py#L168): Atualizar `uc_map` para incluir `distribuidora_id`
-    - [Linha 289](etl/load/macro/02_processar_staging.py#L289): Adicionar INSERT em `cliente_origem`
-    - [Linha 303](etl/load/macro/02_processar_staging.py#L303): Atualizar `chave_uc` tuple
-    - [Linha 318](etl/load/macro/02_processar_staging.py#L318): Adicionar `AND distribuidora_id=%s` no WHERE
-
+- ✅ **migration.py** — Executado com sucesso
+  - Unique key de `cliente_uc` corrigida para `(cliente_id, uc, distribuidora_id)`
+  - Tabela `cliente_origem` criada e backfillada com 122.168 clientes como `'fornecedor2'`
+  - 12 views criadas por fornecedor (`view_fornecedor2_macro_consolidados`, etc.)
+- ✅ **Alterações de código pós-migração** — Aplicadas em `02_processar_staging.py`
+  - `uc_map` atualizado para chave `(cliente_id, uc, distribuidora_id)`
+  - INSERT em `cliente_origem` adicionado para novos clientes
+- ❌ **Queries por fornecedor no loader.py** — **PENDENTE**
   - Arquivo: `dashboard_macros/data/loader.py`
-    - [Linha 34](dashboard_macros/data/loader.py#L34): Adicionar 4 queries por fornecedor no dict `SQLs`
+  - Próximo passo: Adicionar 4 queries por fornecedor no dict `SQLs`
 
 ---
 
 ## 🔄 Pipelines Operacionais
 
 ### 🔄 Fornecedor2 — Operacional (diário)
-**Status:** Ativo — processando dados de hoje (06-04-2026)  
+**Status:** Staging carregado, processamento em andamento (07-04-2026)  
 **Local:** `etl/load/macro/`
 
-- ✅ **01_staging_import.py** — Funcionando
-- ✅ **02_processar_staging.py** — Funcionando
-- ✅ **pipeline_carga_operacional_fornecedor2.py** — Renomeado e funcionando
-- ✅ **Processamento de dados do dia 06-04-2026** — Em execução
+- ✅ **01_staging_import.py** — Staging IDs 1-4 carregados (132.717 linhas válidas)
+- ✅ **02_processar_staging.py** — Adaptado à migration 20260406 (uc_map + cliente_origem)
+- ✅ **pipeline_carga_operacional_fornecedor2.py** — Funcionando
+- 🔄 **Processamento staging → produção** — **EM ANDAMENTO**
+  - 8.500 linhas do staging_id=1 já inseridas antes da interrupção
+  - Reiniciado em 07-04-2026; processa as ~124.217 linhas restantes (IDs 1-4)
 - ❌ **Integração com macro** — **PENDENTE**
   - Status: Pipeline carrega dados → `tabela_macros` com status='pendente'; macro configurada e validada
   - Próximo passo: Rodar `EXECUTAR.bat` após carga diária e validar ciclo completo
@@ -133,17 +128,11 @@
 ## 🎯 Ordem Recomendada de Execução
 
 ### Fase 1: Melhorias na Infraestrutura
-1. **Executar melhoria do banco + alterações de código (atômico):**
-   ```bash
-   python db/improvements/20260406_cliente_origem_views_fornecedor/migration.py --dry-run
-   python db/improvements/20260406_cliente_origem_views_fornecedor/migration.py
-   ```
-   Imediatamente após: aplicar os 4 pontos em `02_processar_staging.py` e 1 em `loader.py`
+1. ✅ **Melhoria do banco executada** — `migration.py` aplicado (2026-04-07)
+   - 122.168 clientes backfillados como `'fornecedor2'`; 12 views criadas
+   - `02_processar_staging.py` adaptado
 
-2. **Validar pipeline operacional:**
-   ```bash
-   python etl/load/macro/pipeline_carga_operacional_fornecedor2.py --dry-run
-   ```
+2. 🔄 **Pipeline operacional em execução** — staging → produção (132.717 linhas)
 
 3. **Rodar ciclo completo da macro:**
    ```

@@ -29,7 +29,7 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 from config import db_destino  # noqa: E402
 
-DB_CONFIG = db_destino(autocommit=False)
+DB_CONFIG = db_destino(autocommit=False, read_timeout=30, write_timeout=60)
 
 DISTRIBUIDORA_MAP = {
     "celp":                3,
@@ -159,20 +159,19 @@ def colunas_telefone(df: pd.DataFrame) -> list[str]:
 # Carregamento de maps de deduplicação
 # ---------------------------------------------------------------------------
 
+def conectar():
+    return pymysql.connect(**DB_CONFIG)
+
+
 def carregar_maps(cur) -> tuple[dict, dict, set, set, set]:
     print("  [INFO] Carregando maps de deduplicação...")
 
     cur.execute("SELECT cpf, id FROM clientes")
     cpf_map = {r[0]: r[1] for r in cur.fetchall()}
 
-    # TODO [improvements 20260406]: incluir distribuidora_id na chave após aplicar
-    # db/improvements/20260406_cliente_origem_views_fornecedor/migration.py
-    # Antes:  SELECT cliente_id, uc, id FROM cliente_uc
-    #         uc_map = {(r[0], r[1]): r[2] for r in cur.fetchall()}
-    # Depois: SELECT cliente_id, uc, distribuidora_id, id FROM cliente_uc
-    #         uc_map = {(r[0], r[1], r[2]): r[3] for r in cur.fetchall()}
-    cur.execute("SELECT cliente_id, uc, id FROM cliente_uc")
-    uc_map = {(r[0], r[1]): r[2] for r in cur.fetchall()}
+    # Inclui distribuidora_id na chave (migration 20260406)
+    cur.execute("SELECT cliente_id, uc, distribuidora_id, id FROM cliente_uc")
+    uc_map = {(r[0], r[1], r[2]): r[3] for r in cur.fetchall()}
 
     cur.execute("SELECT cliente_id, distribuidora_id FROM tabela_macros "
                 "WHERE status='pendente' AND DATE(data_criacao)=CURDATE()")
@@ -233,6 +232,7 @@ def processar_staging(conn, staging_id: int, dry_run: bool) -> dict:
     print(f"  Distrib={distrib_id}  |  linhas_válidas={len(valid_rows):,}")
 
     cpf_map, uc_map, macros_hoje, tel_set, end_set = carregar_maps(cur)
+    cur.close()  # leitura inicial concluída
 
     data_criacao = datetime.today().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -245,6 +245,10 @@ def processar_staging(conn, staging_id: int, dry_run: bool) -> dict:
         "processadas": 0,
         "erros": 0,
     }
+
+    # Conexão de escrita dedicada — reconectada a cada commit para evitar timeout
+    conn_w = conectar()
+    cur_w  = conn_w.cursor()
 
     # Filtra apenas as linhas válidas
     df_validas = df[df.index.isin(valid_rows.keys())]
@@ -260,22 +264,27 @@ def processar_staging(conn, staging_id: int, dry_run: bool) -> dict:
 
         nome = norm_str(row.get("nome"), 255)
 
-        # ------------------------------------------------------------------
-        # clientes (INSERT IGNORE → get id)
-        # ------------------------------------------------------------------
+        # clientes
         if norm_c not in cpf_map:
             if not dry_run:
-                cur.execute(
+                cur_w.execute(
                     "INSERT IGNORE INTO clientes (cpf, nome, data_criacao)"
                     " VALUES (%s, %s, %s)",
                     (norm_c, nome, data_criacao),
                 )
-                if cur.rowcount:
-                    cpf_map[norm_c] = cur.lastrowid
+                if cur_w.rowcount:
+                    cpf_map[norm_c] = cur_w.lastrowid
                     stats["clientes_novos"] += 1
+                    # Registra proveniência na tabela cliente_origem (migration 20260406)
+                    cur_w.execute(
+                        "INSERT IGNORE INTO cliente_origem"
+                        " (cliente_id, fornecedor, campanha, data_import)"
+                        " VALUES (%s, 'fornecedor2', 'operacional', %s)",
+                        (cpf_map[norm_c], data_criacao),
+                    )
                 else:
-                    cur.execute("SELECT id FROM clientes WHERE cpf=%s", (norm_c,))
-                    r2 = cur.fetchone()
+                    cur_w.execute("SELECT id FROM clientes WHERE cpf=%s", (norm_c,))
+                    r2 = cur_w.fetchone()
                     cpf_map[norm_c] = r2[0] if r2 else None
             else:
                 cpf_map[norm_c] = -(idx + 1)
@@ -286,41 +295,29 @@ def processar_staging(conn, staging_id: int, dry_run: bool) -> dict:
             stats["erros"] += 1
             continue
 
-        # TODO [improvements 20260406]: registrar proveniência após improvements/20260406_cliente_origem_views_fornecedor/migration.py aplicado
-        # Todos os dados que passam por staging atualmente são de fornecedor2.
-        # Após a migração, inserir aqui:
-        #   if not dry_run:
-        #       cur.execute(
-        #           "INSERT IGNORE INTO cliente_origem"
-        #           " (cliente_id, fornecedor, campanha)"
-        #           " VALUES (%s, 'fornecedor2', 'operacional')",
-        #           (cliente_id,)
-        #       )
-
         # ------------------------------------------------------------------
         # cliente_uc (INSERT IGNORE → get id)
         # ------------------------------------------------------------------
-        # TODO [improvements 20260406]: chave deve incluir distrib_id após improvements/20260406_cliente_origem_views_fornecedor/migration.py aplicado
-        # chave_uc = (cliente_id if cliente_id > 0 else 0, uc, distrib_id)
-        chave_uc = (cliente_id if cliente_id > 0 else 0, uc)
+        # chave inclui distribuidora_id (migration 20260406)
+        chave_uc = (cliente_id if cliente_id > 0 else 0, uc, distrib_id)
         if chave_uc not in uc_map:
             if not dry_run:
-                cur.execute(
+                cur_w.execute(
                     "INSERT IGNORE INTO cliente_uc"
                     " (cliente_id, uc, distribuidora_id, data_criacao)"
                     " VALUES (%s, %s, %s, %s)",
                     (cliente_id, uc, distrib_id, data_criacao),
                 )
-                if cur.rowcount:
-                    uc_map[chave_uc] = cur.lastrowid
+                if cur_w.rowcount:
+                    uc_map[chave_uc] = cur_w.lastrowid
                     stats["uc_novas"] += 1
                 else:
-                    # TODO [improvements 20260406]: adicionar AND distribuidora_id=%s no WHERE
-                    cur.execute(
-                        "SELECT id FROM cliente_uc WHERE cliente_id=%s AND uc=%s",
-                        (cliente_id, uc),
+                    cur_w.execute(
+                        "SELECT id FROM cliente_uc"
+                        " WHERE cliente_id=%s AND uc=%s AND distribuidora_id=%s",
+                        (cliente_id, uc, distrib_id),
                     )
-                    r2 = cur.fetchone()
+                    r2 = cur_w.fetchone()
                     uc_map[chave_uc] = r2[0] if r2 else None
             else:
                 uc_map[chave_uc] = -(idx + 1)
@@ -334,7 +331,7 @@ def processar_staging(conn, staging_id: int, dry_run: bool) -> dict:
         chave_macro = (cliente_id if cliente_id > 0 else 0, distrib_id)
         if chave_macro not in macros_hoje:
             if not dry_run:
-                cur.execute(
+                cur_w.execute(
                     "INSERT INTO tabela_macros"
                     " (cliente_id, distribuidora_id, resposta_id, status, data_criacao)"
                     " VALUES (%s, %s, %s, 'pendente', %s)",
@@ -352,7 +349,7 @@ def processar_staging(conn, staging_id: int, dry_run: bool) -> dict:
                 chave_tel = (cliente_id if cliente_id > 0 else 0, tel_val)
                 if chave_tel not in tel_set:
                     if not dry_run:
-                        cur.execute(
+                        cur_w.execute(
                             "INSERT INTO telefones"
                             " (cliente_id, telefone, tipo, data_criacao)"
                             " VALUES (%s, %s, %s, %s)",
@@ -385,7 +382,7 @@ def processar_staging(conn, staging_id: int, dry_run: bool) -> dict:
 
             if logradouro and chave_end not in end_set:
                 if not dry_run:
-                    cur.execute(
+                    cur_w.execute(
                         "INSERT INTO enderecos"
                         " (cliente_id, cliente_uc_id, distribuidora_id,"
                         "  endereco, numero, bairro, cidade, uf, cep, data_criacao)"
@@ -402,15 +399,17 @@ def processar_staging(conn, staging_id: int, dry_run: bool) -> dict:
         stats["processadas"] += 1
         processadas_idx.append(idx)
 
-        # Commit e progresso a cada BATCH linhas
+        # Commit e progresso a cada BATCH linhas — reconecta para evitar timeout
         if len(processadas_idx) >= BATCH and not dry_run:
             placeholders = ",".join(["%s"] * len(processadas_idx))
-            cur.execute(
+            cur_w.execute(
                 f"UPDATE staging_import_rows SET processed_at=NOW()"
                 f" WHERE staging_id=%s AND row_idx IN ({placeholders})",
                 [staging_id] + processadas_idx,
             )
-            conn.commit()
+            conn_w.commit()
+            cur_w.close()
+            conn_w.close()
             processadas_idx.clear()
 
             pct = stats["processadas"] / len(valid_rows) * 100
@@ -423,22 +422,27 @@ def processar_staging(conn, staging_id: int, dry_run: bool) -> dict:
                 f"  end={stats['enderecos']}"
             )
 
+            # Reconecta para o próximo lote
+            conn_w = conectar()
+            cur_w  = conn_w.cursor()
+
     # Commit final dos restos
     if not dry_run:
         if processadas_idx:
             placeholders = ",".join(["%s"] * len(processadas_idx))
-            cur.execute(
+            cur_w.execute(
                 f"UPDATE staging_import_rows SET processed_at=NOW()"
                 f" WHERE staging_id=%s AND row_idx IN ({placeholders})",
                 [staging_id] + processadas_idx,
             )
-        cur.execute(
+        cur_w.execute(
             "UPDATE staging_imports SET rows_success=%s WHERE id=%s",
             (stats["processadas"], staging_id),
         )
-        conn.commit()
+        conn_w.commit()
 
-    cur.close()
+    cur_w.close()
+    conn_w.close()
     return stats
 
 
