@@ -73,9 +73,9 @@ def main():
     # PASSO 1 — Staging Import
     # -----------------------------------------------------------------------
     if not args.so_processar:
-        print(f"\n{'─' * 70}")
-        print(f"PASSO 1  —  Staging import  ({data_str})")
-        print(f"{'─' * 70}")
+        print(f"\n{'-' * 70}")
+        print(f"PASSO 1  --  Staging import  ({data_str})")
+        print(f"{'-' * 70}")
 
         argv_staging = ["01_staging_import.py"]
         if args.data:
@@ -92,9 +92,9 @@ def main():
     # PASSO 2 — Processar Staging → Produção
     # -----------------------------------------------------------------------
     if not args.so_staging:
-        print(f"\n{'─' * 70}")
-        print("PASSO 2  —  Processar staging → produção")
-        print(f"{'─' * 70}")
+        print(f"\n{'-' * 70}")
+        print("PASSO 2  --  Processar staging -> producao")
+        print(f"{'-' * 70}")
 
         argv_proc = ["02_processar_staging.py"]
         if args.dry_run:
