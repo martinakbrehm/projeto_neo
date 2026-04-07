@@ -3,21 +3,29 @@ interpretar_resposta.py
 =======================
 ETAPA AUTOMÁTICA — Transformation: interpreta a resposta bruta da API Neo Energia.
 
-A API retorna texto livre (XML/JSON/string). Este módulo mapeia o conteúdo
-da resposta para os valores estruturados do banco:
-  - resposta_id  (FK → tabela respostas)
-  - novo_status  (ENUM de tabela_macros)
+A API retorna JSON com o campo CodigoRetorno que mapeia diretamente para o id
+da tabela `respostas` do banco:
 
-Mapeamento baseado na tabela `respostas` do schema:
-  id=6   'Aguardando processamento'         → status='pendente'      (não deveria aparecer aqui)
-  id=7   'Doc. Fiscal nao cadastrado no SAP' → status='excluido'
-  id=8   'Parceiro informado não possui...'  → status='excluido'
-  id=9   'Status instalacao: desligado'      → status='reprocessar'
-  id=10  'Status instalacao: ligado'         → status='consolidado'
-  id=11  'ERRO'                              → status='pendente'  (recoloca na fila)
+  CodigoRetorno → id em `respostas` → status em tabela_macros
+  ─────────────────────────────────────────────────────────────
+  000  Conta Contrato nao existe                    → excluido
+  001  Doc. fiscal não existe                       → excluido
+  002  Titularidade não confirmada                  → excluido
+  003  Titularidade confirmada com contrato ativo   → consolidado
+  004  Titularidade confirmada com contrato inativo → reprocessar
+  005  Titularidade confirmada com inst. suspensa   → reprocessar
+  006  Aguardando processamento                     → pendente
+  007  Doc. Fiscal nao cadastrado no SAP            → excluido
+  008  Parceiro informado nao possui conta contrato → excluido
+  009  Status instalacao: desligado                 → reprocessar
+  010  Status instalacao: ligado                    → consolidado
+  011  ERRO                                         → reprocessar
 
-Erros de comunicação (timeout, LIMIT_EXCEEDED, ERRO_RETRY) → status='reprocessar'
-Resposta desconhecida → status='reprocessar' com resposta_id=11 (ERRO)
+Erros de comunicação (timeout, LIMIT_EXCEEDED, ERRO_RETRY) → reprocessar, id=11
+Resposta desconhecida → reprocessar, id=11
+
+A fonte de verdade do mapeamento é a tabela `respostas` do banco.
+Se um mapa carregado do banco for passado, ele tem precedência sobre o fallback.
 
 Chamado por:
   etl/load/macro/04_processar_retorno_macro.py
@@ -25,50 +33,63 @@ Chamado por:
 
 from __future__ import annotations
 
+import json
+
 # ---------------------------------------------------------------------------
-# Mapeamento de palavras-chave → (resposta_id, novo_status)
-# Ordem importa: verificações mais específicas ANTES das genéricas.
+# Tradução do campo `status` da tabela `respostas` → ENUM de tabela_macros
+# (a tabela usa 'excluir', o ENUM usa 'excluido')
 # ---------------------------------------------------------------------------
-# Cada entrada: (substring_lower, resposta_id, novo_status)
-_REGRAS: list[tuple[str, int, str]] = [
-    # Instalação ligada → consolidado
-    ("instalacao: ligado",              10, "consolidado"),
-    ("instalação: ligado",              10, "consolidado"),
-    ("ligado",                          10, "consolidado"),   # fallback
+_STATUS_RESPOSTAS_PARA_ENUM: dict[str, str] = {
+    "excluir":    "excluido",
+    "excluido":   "excluido",
+    "consolidado":"consolidado",
+    "reprocessar":"reprocessar",
+    "pendente":   "pendente",
+}
 
-    # Instalação desligada → reprocessar (pode ligar depois)
-    ("instalacao: desligado",           9,  "reprocessar"),
-    ("instalação: desligado",           9,  "reprocessar"),
-    ("desligado",                       9,  "reprocessar"),   # fallback
+# ---------------------------------------------------------------------------
+# Fallback hardcoded — espelho da tabela `respostas` do banco.
+# Usado quando mapa_respostas não é fornecido.
+# Formato: codigo_int → (resposta_id, novo_status_enum)
+# ---------------------------------------------------------------------------
+_CODIGO_PARA_STATUS: dict[int, tuple[int, str]] = {
+    0:  (0,  "excluido"),
+    1:  (1,  "excluido"),
+    2:  (2,  "excluido"),
+    3:  (3,  "consolidado"),
+    4:  (4,  "reprocessar"),
+    5:  (5,  "reprocessar"),
+    6:  (6,  "pendente"),
+    7:  (7,  "excluido"),
+    8:  (8,  "excluido"),
+    9:  (9,  "reprocessar"),
+    10: (10, "consolidado"),
+    11: (11, "reprocessar"),
+}
 
-    # SAP — parceiro sem conta contrato → excluir
-    ("parceiro informado n",            8,  "excluido"),
-    ("nao possui conta contrato",       8,  "excluido"),
-    ("não possui conta contrato",       8,  "excluido"),
-
-    # SAP — documento fiscal não cadastrado → excluir
-    ("doc. fiscal nao cadastrado",      7,  "excluido"),
-    ("doc. fiscal não cadastrado",      7,  "excluido"),
-    ("nao cadastrado no sap",           7,  "excluido"),
-    ("não cadastrado no sap",           7,  "excluido"),
-
-    # Limite de conexões SAP — recoloca na fila com reprocessar
-    ("peak connections limit",          11, "reprocessar"),
-    ("limit_exceeded",                  11, "reprocessar"),
-
-    # Erros de comunicação → reprocessar
-    ("erro_retry",                      11, "reprocessar"),
-    ("timeout",                         11, "reprocessar"),
-]
-
-# Resposta padrão para qualquer coisa desconhecida
+# Usado quando a resposta é vazia/None (dado não chegou)
+_PADRAO_VAZIO       = (11, "reprocessar")
+# Usado para strings de erro de comunicação ou código desconhecido
 _PADRAO_DESCONHECIDO = (11, "reprocessar")
 
-# resposta_id para erros sem texto (linha vazia / None)
-_PADRAO_VAZIO = (11, "pendente")   # recoloca como pendente: dado não chegou
+# ---------------------------------------------------------------------------
+# Regras de fallback para respostas que NÃO são JSON válido
+# (erros de comunicação: timeout, ERRO_RETRY, LIMIT_EXCEEDED…)
+# Ordem importa: mais específicas ANTES das genéricas.
+# ---------------------------------------------------------------------------
+_REGRAS_TEXTO: list[tuple[str, int, str]] = [
+    ("peak connections limit",  11, "reprocessar"),
+    ("limit_exceeded",          11, "reprocessar"),
+    ("erro_retry",              11, "reprocessar"),
+    ("timeout",                 11, "reprocessar"),
+    ("erro:",                   11, "reprocessar"),
+]
 
 
-def interpretar(resposta_bruta: str | None) -> tuple[int, str]:
+def interpretar(
+    resposta_bruta: str | None,
+    mapa_respostas: dict[int, dict] | None = None,
+) -> tuple[int, str]:
     """
     Interpreta a resposta bruta da API e retorna (resposta_id, novo_status).
 
@@ -76,6 +97,10 @@ def interpretar(resposta_bruta: str | None) -> tuple[int, str]:
     ----------
     resposta_bruta : str | None
         Texto retornado pela API Neo Energia, ou None/vazio se a consulta falhou.
+    mapa_respostas : dict | None
+        Mapa carregado do banco via carregar_mapa_respostas(). Se fornecido,
+        usado para traduzir CodigoRetorno → status dinamicamente.
+        Formato: {id_int: {'mensagem': str, 'status': str}}
 
     Retorna
     -------
@@ -85,13 +110,31 @@ def interpretar(resposta_bruta: str | None) -> tuple[int, str]:
     if not resposta_bruta or not str(resposta_bruta).strip():
         return _PADRAO_VAZIO
 
-    texto = str(resposta_bruta).strip().lower()
+    texto = str(resposta_bruta).strip()
 
-    for substring, rid, status in _REGRAS:
-        if substring in texto:
+    # ── 1. Tenta parsear JSON e usar CodigoRetorno ──────────────────────────
+    try:
+        data = json.loads(texto)
+        codigo_str = str(data.get("CodigoRetorno", "")).strip()
+        if codigo_str.isdigit():
+            codigo = int(codigo_str)
+            if mapa_respostas and codigo in mapa_respostas:
+                # Fonte de verdade: tabela respostas do banco
+                status_db = mapa_respostas[codigo].get("status", "reprocessar")
+                status_enum = _STATUS_RESPOSTAS_PARA_ENUM.get(status_db, "reprocessar")
+                return codigo, status_enum
+            # Fallback hardcoded
+            if codigo in _CODIGO_PARA_STATUS:
+                return _CODIGO_PARA_STATUS[codigo]
+    except (json.JSONDecodeError, ValueError, TypeError):
+        pass
+
+    # ── 2. Fallback por palavras-chave (erros de comunicação) ───────────────
+    texto_lower = texto.lower()
+    for substring, rid, status in _REGRAS_TEXTO:
+        if substring in texto_lower:
             return rid, status
 
-    # Nenhuma regra bateu
     return _PADRAO_DESCONHECIDO
 
 

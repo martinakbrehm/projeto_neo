@@ -42,7 +42,7 @@ from config import db_destino  # noqa: E402
 
 # Importa a lógica de interpretação da camada transformation
 sys.path.insert(0, str(ROOT / "etl" / "transformation" / "macro"))
-from interpretar_resposta import interpretar  # noqa: E402
+from interpretar_resposta import interpretar, carregar_mapa_respostas  # noqa: E402
 
 DB_CONFIG = db_destino(autocommit=False)
 
@@ -138,6 +138,9 @@ def processar(conn, df_resultado: pd.DataFrame, meta: dict, dry_run: bool) -> di
     idx = construir_indice_meta(meta)
     ids_no_lote = {int(r["macro_id"]) for r in meta.get("registros", [])}
 
+    # Carrega mapa de respostas do banco para interpretação dinâmica
+    mapa_respostas = carregar_mapa_respostas(cur)
+
     stats = {
         "consolidado": 0,
         "reprocessar": 0,
@@ -146,9 +149,6 @@ def processar(conn, df_resultado: pd.DataFrame, meta: dict, dry_run: bool) -> di
         "sem_match":   0,   # linha do resultado sem macro_id correspondente
         "recuperados": 0,   # registros processando sem resultado
     }
-
-    ids_processados: set[int] = set()
-    pendentes_update: list[tuple] = []   # (novo_status, resposta_id, macro_id)
 
     # Detecta coluna de resposta (a macro salva como 'resposta')
     col_resposta = next(
@@ -166,6 +166,16 @@ def processar(conn, df_resultado: pd.DataFrame, meta: dict, dry_run: bool) -> di
         print("  [ERRO] Coluna 'resposta' não encontrada no arquivo de resultado.")
         sys.exit(1)
 
+    # ── Agregar por macro_id ────────────────────────────────────────────────
+    # Um cliente pode ter múltiplas UCs (JOIN 1:N com cliente_uc).
+    # Para cada macro_id, coletamos TODOS os resultados e escolhemos o "melhor"
+    # status conforme a prioridade: consolidado > reprocessar > excluido > pendente.
+    # Isso garante: se qualquer UC confirmar titularidade → consolidado.
+    STATUS_PRIORIDADE = {"consolidado": 3, "reprocessar": 2, "excluido": 1, "pendente": 0}
+
+    # macro_id → (melhor_status, resposta_id_do_melhor)
+    melhor_por_id: dict[int, tuple[str, int]] = {}
+
     for _, row in df_resultado.iterrows():
         cpf_norm = normalizar_cpf(row.get(col_cpf, "")) if col_cpf else ""
         uc_norm  = normalizar_uc(row.get(col_uc, "")) if col_uc else ""
@@ -176,23 +186,29 @@ def processar(conn, df_resultado: pd.DataFrame, meta: dict, dry_run: bool) -> di
             stats["sem_match"] += 1
             continue
 
-        resposta_id, novo_status = interpretar(resposta_bruta)
-        stats[novo_status] = stats.get(novo_status, 0) + 1
+        resposta_id, novo_status = interpretar(resposta_bruta, mapa_respostas)
 
+        # Mantém o resultado de maior prioridade para este macro_id
+        atual = melhor_por_id.get(macro_id)
+        if atual is None or STATUS_PRIORIDADE.get(novo_status, 0) > STATUS_PRIORIDADE.get(atual[0], 0):
+            melhor_por_id[macro_id] = (novo_status, resposta_id)
+
+    # ── Consolidar stats e preparar updates (um por macro_id) ──────────────
+    ids_processados: set[int] = set()
+    pendentes_update: list[tuple] = []
+
+    for macro_id, (novo_status, resposta_id) in melhor_por_id.items():
+        stats[novo_status] = stats.get(novo_status, 0) + 1
         pendentes_update.append((novo_status, resposta_id, macro_id))
         ids_processados.add(macro_id)
 
-        if len(pendentes_update) >= BATCH and not dry_run:
-            for args in pendentes_update:
+    # ── Executar updates em lotes ───────────────────────────────────────────
+    if not dry_run:
+        for i in range(0, len(pendentes_update), BATCH):
+            lote = pendentes_update[i:i + BATCH]
+            for args in lote:
                 cur.execute(SQL_UPDATE_MACRO, args)
             conn.commit()
-            pendentes_update.clear()
-
-    # Flush final
-    if not dry_run and pendentes_update:
-        for args in pendentes_update:
-            cur.execute(SQL_UPDATE_MACRO, args)
-        conn.commit()
 
     # Recuperação: registros do lote sem resultado (macro parou no meio)
     ids_sem_resultado = ids_no_lote - ids_processados
