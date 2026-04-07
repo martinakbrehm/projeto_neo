@@ -29,7 +29,7 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 from config import db_destino  # noqa: E402
 
-DB_CONFIG = db_destino(autocommit=False, read_timeout=30, write_timeout=60)
+DB_CONFIG = db_destino(autocommit=False, read_timeout=600, write_timeout=600)
 
 DISTRIBUIDORA_MAP = {
     "celp":                3,
@@ -174,7 +174,7 @@ def carregar_maps(cur) -> tuple[dict, dict, set, set, set]:
     uc_map = {(r[0], r[1], r[2]): r[3] for r in cur.fetchall()}
 
     cur.execute("SELECT cliente_id, distribuidora_id FROM tabela_macros "
-                "WHERE status='pendente' AND DATE(data_criacao)=CURDATE()")
+                "WHERE status='pendente' AND data_criacao_data=CURDATE()")
     macros_hoje = {(r[0], r[1]) for r in cur.fetchall()}
 
     cur.execute("SELECT cliente_id, telefone FROM telefones WHERE telefone IS NOT NULL")
@@ -487,7 +487,7 @@ def main():
         return
 
     print(SEP)
-    print(f"PROCESSAR STAGING → PRODUÇÃO  —  {len(ids)} arquivo(s)")
+    print(f"PROCESSAR STAGING -> PRODUÇÃO  —  {len(ids)} arquivo(s)")
     print(SEP)
 
     if args.dry_run:

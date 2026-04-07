@@ -1,7 +1,7 @@
 """
 inspecionar_controle_bases.py
 =============================
-Inspeciona o banco controle_bases, tabela neo.
+Inspeciona o banco de origem: controle_bases, tabela neo.
 
 Exibe:
   1. Colunas e tipos da tabela

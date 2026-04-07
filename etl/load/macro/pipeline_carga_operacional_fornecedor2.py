@@ -26,8 +26,31 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+try:
+    import pymysql
+    _MYSQL_ERROS_RETRIAVEL = (2013, 1205, 2006, 1213)  # lost conn, lock timeout, gone away, deadlock
+except ImportError:
+    pymysql = None
+    _MYSQL_ERROS_RETRIAVEL = ()
+
 SEP = "=" * 70
 ETL_DIR = Path(__file__).resolve().parent
+
+MAX_TENTATIVAS = 5          # quantas vezes tenta antes de desistir
+ESPERA_BASE_S  = 30         # segundos de espera antes de cada reintento
+FATOR_BACKOFF  = 2          # dobra a espera a cada falha consecutiva
+
+
+def _e_erro_retriavel(exc: Exception) -> bool:
+    """Retorna True se o erro é transitório e vale a pena tentar novamente."""
+    if pymysql and isinstance(exc, pymysql.err.OperationalError):
+        codigo = exc.args[0] if exc.args else 0
+        return codigo in _MYSQL_ERROS_RETRIAVEL
+    # timeout genérico de socket
+    if isinstance(exc, TimeoutError):
+        return True
+    nome = type(exc).__name__
+    return "Timeout" in nome or "Lost" in nome or "Deadlock" in nome.capitalize()
 
 
 def carregar_modulo(nome: str, caminho: Path):
@@ -38,13 +61,35 @@ def carregar_modulo(nome: str, caminho: Path):
     return mod
 
 
+def executar_com_retry(nome_passo: str, fn):
+    """
+    Executa fn() e reintenta automaticamente em caso de erros transitórios.
+    Cada nova tentativa recarrega o módulo do zero para garantir conexão limpa.
+    """
+    espera = ESPERA_BASE_S
+    for tentativa in range(1, MAX_TENTATIVAS + 1):
+        try:
+            fn()
+            return  # sucesso
+        except Exception as exc:
+            if tentativa == MAX_TENTATIVAS or not _e_erro_retriavel(exc):
+                print(f"\n[ERRO] {nome_passo} falhou na tentativa {tentativa}/{MAX_TENTATIVAS}: {exc}")
+                raise
+            print(f"\n[AVISO] {nome_passo} tentativa {tentativa}/{MAX_TENTATIVAS} falhou: "
+                  f"{type(exc).__name__}({exc.args[0] if exc.args else ''})")
+            print(f"[AVISO] Aguardando {espera}s antes de reiniciar...")
+            time.sleep(espera)
+            espera = min(espera * FATOR_BACKOFF, 300)  # máximo 5 min
+            print(f"[INFO] Reiniciando {nome_passo} (tentativa {tentativa + 1}/{MAX_TENTATIVAS})...")
+
+
 def main():
     parser = argparse.ArgumentParser(
-        description="Pipeline de carga operacional — fornecedor2"
+        description="Pipeline de carga operacional - fornecedor2"
     )
     parser.add_argument(
         "--data", default=None,
-        help="Data da pasta DD-MM-YYYY (padrão: hoje)",
+        help="Data da pasta DD-MM-YYYY (padrao: hoje)",
     )
     parser.add_argument(
         "--dry-run", action="store_true",
@@ -56,7 +101,7 @@ def main():
     )
     parser.add_argument(
         "--so-processar", action="store_true",
-        help="Executa apenas o passo 2 (produção)",
+        help="Executa apenas o passo 2 (producao)",
     )
     args = parser.parse_args()
 
@@ -66,11 +111,12 @@ def main():
     print(SEP)
     print(f"PIPELINE CARGA OPERACIONAL  |  fornecedor2  |  {data_str}")
     if args.dry_run:
-        print("  [DRY-RUN] nenhuma alteração será gravada")
+        print("  [DRY-RUN] nenhuma alteracao sera gravada")
+    print(f"  [RETRY] max {MAX_TENTATIVAS} tentativas por passo, backoff {ESPERA_BASE_S}s base")
     print(SEP)
 
     # -----------------------------------------------------------------------
-    # PASSO 1 — Staging Import
+    # PASSO 1 -- Staging Import
     # -----------------------------------------------------------------------
     if not args.so_processar:
         print(f"\n{'-' * 70}")
@@ -83,13 +129,16 @@ def main():
         if args.dry_run:
             argv_staging.append("--dry-run")
 
-        sys.argv = argv_staging
-        mod1 = carregar_modulo("staging_import",
-                               ETL_DIR / "01_staging_import.py")
-        mod1.main()
+        def _rodar_staging():
+            sys.argv = argv_staging[:]
+            mod1 = carregar_modulo("staging_import",
+                                   ETL_DIR / "01_staging_import.py")
+            mod1.main()
+
+        executar_com_retry("PASSO 1 (staging import)", _rodar_staging)
 
     # -----------------------------------------------------------------------
-    # PASSO 2 — Processar Staging → Produção
+    # PASSO 2 -- Processar Staging -> Producao
     # -----------------------------------------------------------------------
     if not args.so_staging:
         print(f"\n{'-' * 70}")
@@ -100,17 +149,20 @@ def main():
         if args.dry_run:
             argv_proc.append("--dry-run")
 
-        sys.argv = argv_proc
-        mod2 = carregar_modulo("processar_staging",
-                               ETL_DIR / "02_processar_staging.py")
-        mod2.main()
+        def _rodar_processar():
+            sys.argv = argv_proc[:]
+            mod2 = carregar_modulo("processar_staging",
+                                   ETL_DIR / "02_processar_staging.py")
+            mod2.main()
+
+        executar_com_retry("PASSO 2 (processar staging)", _rodar_processar)
 
     # -----------------------------------------------------------------------
     # Resumo final
     # -----------------------------------------------------------------------
     elapsed = time.time() - t0
     print(f"\n{SEP}")
-    print(f"Pipeline concluído em {elapsed:.1f}s"
+    print(f"Pipeline concluido em {elapsed:.1f}s"
           + (" [DRY-RUN]" if args.dry_run else ""))
     print(SEP)
 
