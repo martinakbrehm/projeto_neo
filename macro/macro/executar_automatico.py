@@ -397,18 +397,21 @@ def run_python_script():
         return False
 
 
-def run_etl_buscar_lote(tamanho: int = 2000) -> bool:
+def run_etl_buscar_lote(tamanho: int = 2000, dry_run: bool = False) -> bool:
     """PASSO 1 — EXTRACT: busca lote priorizado e exporta CSV para a macro.
     Script: etl/extraction/macro/03_buscar_lote_macro.py
     """
-    print(f"\n🗔 [PASSO 1] Buscando lote do banco (tamanho={tamanho})...")
+    print(f"\n\U0001f5d4 [PASSO 1] Buscando lote do banco (tamanho={tamanho})...")
     if not ETL_BUSCAR.exists():
         print(f"❌ Script ETL não encontrado: {ETL_BUSCAR}")
         return False
     try:
+        cmd = [str(ETL_PYTHON_EXE), str(ETL_BUSCAR), "--tamanho", str(tamanho)]
+        if dry_run:
+            cmd.append("--dry-run")
         # Usa o Python do sistema (tem pymysql/pandas e é aprovado pelo AppLocker)
         result = subprocess.run(
-            [str(ETL_PYTHON_EXE), str(ETL_BUSCAR), "--tamanho", str(tamanho)],
+            cmd,
             cwd=str(PROJETO_DIR),
             capture_output=False,
         )
@@ -480,7 +483,7 @@ def main():
     print("\n" + "=" * 50)
     print("PASSO 1 — Buscar lote do banco")
     print("=" * 50)
-    if not run_etl_buscar_lote(tamanho=args.tamanho):
+    if not run_etl_buscar_lote(tamanho=args.tamanho, dry_run=args.dry_run):
         print("\nℹ️ Lote vazio ou erro no passo 1 — encerrando.")
         return 0
 
