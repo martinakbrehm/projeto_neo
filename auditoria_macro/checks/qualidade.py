@@ -6,9 +6,31 @@ Verifica qualidade dos dados salvos:
 - Registros com campos nulos inesperados
 - Distribuicao por distribuidora (detecta distorcoes)
 - Respostas mais frequentes (identifica padrao de retorno da API)
+
+Alertas com justificativa documentada em requisitos.json (ignorar=true)
+sao exibidos como [INFO] em vez de [ATENCAO].
 """
 
+import json
+from pathlib import Path
 from typing import Any
+
+_REQUISITOS_PATH = Path(__file__).resolve().parents[1] / "requisitos.json"
+
+def _carregar_requisitos() -> dict:
+    try:
+        return json.loads(_REQUISITOS_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+def _flag(chave: str, requisitos: dict) -> str:
+    """Retorna '[INFO]' se o requisito tem ignorar=true, senao '[ATENCAO]'."""
+    req = requisitos.get(chave, {})
+    return "[INFO]" if req.get("ignorar") else "[ATENCAO]"
+
+def _nota(chave: str, requisitos: dict) -> str | None:
+    """Retorna a justificativa documentada, se existir."""
+    return requisitos.get(chave, {}).get("justificativa")
 
 
 def rodar(cur) -> dict[str, Any]:
@@ -88,6 +110,7 @@ def rodar(cur) -> dict[str, Any]:
 
 def formatar(r: dict[str, Any]) -> list[str]:
     linhas = []
+    requisitos = _carregar_requisitos()
     linhas.append("== QUALIDADE DOS DADOS ==")
 
     # Hoje
@@ -97,7 +120,11 @@ def formatar(r: dict[str, Any]) -> list[str]:
 
     taxa_ex = (eh / (ch + eh) * 100) if (ch + eh) > 0 else 0
     if taxa_ex > 60:
-        linhas.append(f"  [ATENCAO] Taxa de exclusao hoje muito alta: {taxa_ex:.1f}%")
+        flag = _flag("taxa_exclusao_alta", requisitos)
+        nota = _nota("taxa_exclusao_alta", requisitos)
+        linhas.append(f"  {flag} Taxa de exclusao hoje muito alta: {taxa_ex:.1f}%")
+        if nota:
+            linhas.append(f"         Justificativa: {nota}")
 
     # Duplicatas
     dup = r["total_duplicatas"]
@@ -109,8 +136,12 @@ def formatar(r: dict[str, Any]) -> list[str]:
 
     # Campos nulos
     csde = r["consolidados_sem_data_extracao"]
+    flag_csde = _flag("consolidados_sem_data_extracao", requisitos)
+    nota_csde = _nota("consolidados_sem_data_extracao", requisitos)
     if csde > 0:
-        linhas.append(f"\n  [ATENCAO] Consolidados sem data_extracao: {csde:,}")
+        linhas.append(f"\n  {flag_csde} Consolidados sem data_extracao: {csde:,}")
+        if nota_csde:
+            linhas.append(f"         Justificativa: {nota_csde}")
     else:
         linhas.append("\n  data_extracao em consolidados: OK")
 

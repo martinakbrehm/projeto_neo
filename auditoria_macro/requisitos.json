@@ -1,0 +1,24 @@
+{
+  "_descricao": "Requisitos e excecoes conhecidas da auditoria. Alertas documentados aqui sao exibidos como INFO, nao como ATENCAO.",
+
+  "consolidados_sem_data_extracao": {
+    "ignorar": true,
+    "justificativa": "Registros historicos importados via migracao (fornecedor1, fornecedor2 periodo_ate_20260312 e periodo_pos_20260312) nao passaram pelo ETL automatico e portanto nao possuem data_extracao. Comportamento esperado e nao representa falha no salvamento.",
+    "registrado_em": "2026-04-08",
+    "registrado_por": "auditoria inicial"
+  },
+
+  "taxa_reprocessar_alta": {
+    "ignorar": false,
+    "justificativa": "Taxa elevada de reprocessar nos primeiros dias e esperada pois a base historica contem registros com UCs desligadas ou contratos inexistentes. Monitorar tendencia de queda nos proximos dias.",
+    "registrado_em": "2026-04-08",
+    "registrado_por": "auditoria inicial"
+  },
+
+  "taxa_exclusao_alta": {
+    "ignorar": false,
+    "justificativa": "Alta taxa de excluidos (respostas: Conta Contrato nao existe, Doc. fiscal nao existe) esperada no inicio do processamento da base historica. Deve cair conforme os registros validos sejam consolidados.",
+    "registrado_em": "2026-04-08",
+    "registrado_por": "auditoria inicial"
+  }
+}
