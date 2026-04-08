@@ -459,108 +459,222 @@ def run_etl_processar_retorno() -> bool:
         print(f"❌ Erro no passo 3: {e}")
         return False
 
-def main():
-    """Orquestrador principal: PASSO 1 (ETL) → PASSO 2 (SSH+macro) → PASSO 3 (ETL)."""
-    import argparse
-    parser = argparse.ArgumentParser(
-        description="Neo Energia — orquestrador automático (ETL + SSH + macro + ETL)"
-    )
-    parser.add_argument("--tamanho", type=int, default=2000,
-                        help="Tamanho do lote (padrão: 2000)")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="Executa apenas o passo 1 (busca) sem gravar no banco")
-    args = parser.parse_args()
+def _executar_um_ciclo(tamanho: int) -> str:
+    """Executa um único ciclo completo: passo 1 → SSH → macro → passo 3.
 
-    print("=" * 60)
-    print("🚀 NEO ENERGIA — EXECUÇÃO AUTOMÁTICA")
-    print("   Prioridade: fornecedor2 → contatus  |  pendente → reprocessar")
-    print("=" * 60)
-    print()
-
+    Retorna:
+        'ok'       — todos os passos concluídos com sucesso
+        'vazio'    — passo 1 não encontrou pendentes (sem CSV gerado)
+        'erro_ssh' — túnel SSH não foi estabelecido
+        'erro'     — falha em algum passo (mas ciclo não travou)
+    """
     # ------------------------------------------------------------------
     # PASSO 1 — ETL: buscar lote priorizado do banco
     # ------------------------------------------------------------------
     print("\n" + "=" * 50)
     print("PASSO 1 — Buscar lote do banco")
     print("=" * 50)
-    if not run_etl_buscar_lote(tamanho=args.tamanho, dry_run=args.dry_run):
-        print("\nℹ️ Lote vazio ou erro no passo 1 — encerrando.")
-        return 0
+    if not run_etl_buscar_lote(tamanho=tamanho):
+        return 'vazio'
 
+    # ------------------------------------------------------------------
+    # Limpa conexões anteriores
+    # ------------------------------------------------------------------
+    print("\n🧹 Limpando conexões anteriores...")
+    kill_existing_ssh()
+
+    # ------------------------------------------------------------------
+    # PASSO 2a — VPN + túnel SSH
+    # ------------------------------------------------------------------
+    verificar_ativar_vpn()
+    time.sleep(3)
+
+    ssh_process = create_ssh_tunnel()
+    if ssh_process is None:
+        # Tenta processar resultado parcial se existir
+        if RESULTADO_CSV.exists():
+            run_etl_processar_retorno()
+        return 'erro_ssh'
+
+    if not testar_api():
+        print("⚠️ API não respondeu no teste — tentando mesmo assim...")
+
+    # ------------------------------------------------------------------
+    # PASSO 2b — Macro: consulta de titularidade via API
+    # ------------------------------------------------------------------
+    print("\n" + "=" * 50)
+    print("PASSO 2 — Macro: consulta de titularidade")
+    print("=" * 50)
+    macro_ok = run_python_script()
+
+    # ------------------------------------------------------------------
+    # Limpa conexões (VPN + SSH)
+    # ------------------------------------------------------------------
+    print("\n🧹 Limpando conexões...")
+    try:
+        subprocess.run(_ssh_cmd_remoto("ipsec down vpn"), capture_output=True, timeout=5)
+    except Exception:
+        pass
+    kill_existing_ssh()
+
+    # ------------------------------------------------------------------
+    # PASSO 3 — ETL: processar retorno (mesmo se macro teve erro parcial)
+    # ------------------------------------------------------------------
+    print("\n" + "=" * 50)
+    print("PASSO 3 — Processar retorno no banco")
+    print("=" * 50)
+    retorno_ok = run_etl_processar_retorno()
+
+    if macro_ok and retorno_ok:
+        return 'ok'
+    return 'erro'
+
+
+def main():
+    """Orquestrador principal com suporte a modo contínuo (loop forever).
+
+    Flags:
+      --tamanho N       Tamanho do lote por ciclo (padrão: 200)
+      --dry-run         Só executa passo 1, sem consultar API nem gravar
+      --continuar       Loop infinito: repete ciclos até não restar pendentes
+                        (ou até Ctrl+C)
+      --pausa N         Segundos de espera entre ciclos no modo --continuar
+                        (padrão: 30)
+      --max-erros N     Número de ciclos com erro seguidos antes de aguardar
+                        mais tempo e reconectar SSH (padrão: 3)
+    """
+    import argparse
+    parser = argparse.ArgumentParser(
+        description="Neo Energia — orquestrador automático (ETL + SSH + macro + ETL)"
+    )
+    parser.add_argument("--tamanho", type=int, default=200,
+                        help="Tamanho do lote por ciclo (padrão: 200)")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="Executa apenas o passo 1 (busca) sem gravar no banco")
+    parser.add_argument("--continuar", action="store_true",
+                        help="Loop infinito: repete ciclos até zerar pendentes ou Ctrl+C")
+    parser.add_argument("--pausa", type=int, default=30,
+                        help="Segundos entre ciclos no modo --continuar (padrão: 30)")
+    parser.add_argument("--max-erros", type=int, default=3,
+                        help="Ciclos com erro seguidos antes de reconectar SSH (padrão: 3)")
+    args = parser.parse_args()
+
+    print("=" * 60)
+    print("🚀 NEO ENERGIA — EXECUÇÃO AUTOMÁTICA")
+    print(f"   Lote: {args.tamanho} | Modo: {'CONTÍNUO (loop)' if args.continuar else 'único ciclo'}")
+    print("   Prioridade: fornecedor2 → contatus  |  pendente → reprocessar")
+    print("=" * 60)
+
+    # ── Modo dry-run (único ciclo parcial) ─────────────────────────────
     if args.dry_run:
+        print("\n" + "=" * 50)
+        print("PASSO 1 — Buscar lote do banco [DRY-RUN]")
+        print("=" * 50)
+        run_etl_buscar_lote(tamanho=args.tamanho, dry_run=True)
         print("\n[DRY-RUN] Encerrando após passo 1.")
         return 0
 
-    try:
-        # ------------------------------------------------------------------
-        # Limpa conexões anteriores
-        # ------------------------------------------------------------------
-        print("\n🧹 Limpando conexões anteriores...")
-        kill_existing_ssh()
-
-        # ------------------------------------------------------------------
-        # PASSO 2a — VPN + túnel SSH
-        # ------------------------------------------------------------------
-        if not verificar_ativar_vpn():
-            print("❌ Falha ao configurar VPN")
-            return 1
-        time.sleep(3)
-
-        ssh_process = create_ssh_tunnel()
-        if ssh_process is None:
-            return 1
-
-        if not testar_api():
-            print("⚠️ API não respondeu no teste — tentando mesmo assim...")
-
-        # ------------------------------------------------------------------
-        # PASSO 2b — Macro: consulta de titularidade via API
-        # ------------------------------------------------------------------
-        print("\n" + "=" * 50)
-        print("PASSO 2 — Macro: consulta de titularidade")
-        print("=" * 50)
-        macro_ok = run_python_script()
-
-        # ------------------------------------------------------------------
-        # Limpa conexões (VPN + SSH)
-        # ------------------------------------------------------------------
-        print("\n🧹 Limpando conexões...")
+    # ── Modo único ciclo ───────────────────────────────────────────────
+    if not args.continuar:
         try:
-            subprocess.run(
-                _ssh_cmd_remoto("ipsec down vpn"),
-                capture_output=True, timeout=5
-            )
-        except Exception:
-            pass
-        kill_existing_ssh()
-
-        # ------------------------------------------------------------------
-        # PASSO 3 — ETL: processar retorno (mesmo se macro teve erro parcial)
-        # ------------------------------------------------------------------
-        print("\n" + "=" * 50)
-        print("PASSO 3 — Processar retorno no banco")
-        print("=" * 50)
-        retorno_ok = run_etl_processar_retorno()
-
-        if macro_ok and retorno_ok:
-            print("\n🎉 CICLO COMPLETO CONCLUÍDO COM SUCESSO!")
-            return 0
-        else:
-            print("\n⚠️ Ciclo concluído com advertências. Verifique os logs.")
+            resultado = _executar_um_ciclo(args.tamanho)
+            if resultado == 'ok':
+                print("\n🎉 CICLO COMPLETO CONCLUÍDO COM SUCESSO!")
+                return 0
+            elif resultado == 'vazio':
+                print("\nℹ️ Sem pendentes — nada a processar.")
+                return 0
+            else:
+                print(f"\n⚠️ Ciclo encerrado com status: {resultado}")
+                return 1
+        except KeyboardInterrupt:
+            print("\n⚠️ Interrompido pelo usuário")
+            kill_existing_ssh()
+            if RESULTADO_CSV.exists():
+                run_etl_processar_retorno()
             return 1
+        except Exception as e:
+            print(f"\n❌ Erro inesperado: {e}")
+            kill_existing_ssh()
+            return 1
+
+    # ── Modo contínuo (loop forever) ───────────────────────────────────
+    ciclo_num        = 0
+    erros_seguidos   = 0
+    total_ok         = 0
+    total_erros      = 0
+    inicio_sessao    = time.time()
+
+    print(f"\n🔄 Modo contínuo iniciado — Ctrl+C para parar com segurança\n")
+
+    try:
+        while True:
+            ciclo_num += 1
+            ts = time.strftime("%Y-%m-%d %H:%M:%S")
+            print("\n" + "█" * 60)
+            print(f"█  CICLO #{ciclo_num:04d}  |  {ts}")
+            print(f"█  Erros seguidos: {erros_seguidos}/{args.max_erros}  |  OK acumulados: {total_ok}")
+            print("█" * 60)
+
+            # ── Reconexão preventiva após muitos erros ─────────────────
+            if erros_seguidos >= args.max_erros:
+                print(f"\n⚠️  {erros_seguidos} erros seguidos — reconectando SSH e aguardando 60s...")
+                kill_existing_ssh()
+                time.sleep(60)
+                verificar_ativar_vpn()
+                time.sleep(5)
+
+            # ── Executa ciclo ──────────────────────────────────────────
+            try:
+                resultado = _executar_um_ciclo(args.tamanho)
+            except Exception as e:
+                print(f"\n❌ Exceção no ciclo #{ciclo_num}: {e}")
+                resultado = 'erro'
+
+            # ── Avalia resultado ───────────────────────────────────────
+            if resultado == 'ok':
+                erros_seguidos = 0
+                total_ok += 1
+                print(f"\n✅ Ciclo #{ciclo_num} concluído com sucesso.")
+
+            elif resultado == 'vazio':
+                erros_seguidos = 0
+                duracao = (time.time() - inicio_sessao) / 60
+                print(f"\n🏁 Sem mais pendentes após {ciclo_num} ciclos "
+                      f"({total_ok} OK, {total_erros} erros) em {duracao:.1f} min")
+                print("   Aguardando 5 min antes de verificar novamente...")
+                time.sleep(300)
+                continue  # volta ao topo sem contar erro
+
+            elif resultado == 'erro_ssh':
+                erros_seguidos += 1
+                total_erros += 1
+                pausa_ssh = min(120, 30 * erros_seguidos)
+                print(f"\n❌ Ciclo #{ciclo_num}: falha SSH — aguardando {pausa_ssh}s antes de tentar novamente...")
+                kill_existing_ssh()
+                time.sleep(pausa_ssh)
+                continue  # pula pausa normal — já esperou
+
+            else:  # 'erro'
+                erros_seguidos += 1
+                total_erros += 1
+                print(f"\n⚠️  Ciclo #{ciclo_num} encerrou com erros ({erros_seguidos} seguidos).")
+
+            # ── Pausa entre ciclos ─────────────────────────────────────
+            print(f"\n⏳ Aguardando {args.pausa}s antes do próximo ciclo...")
+            time.sleep(args.pausa)
 
     except KeyboardInterrupt:
-        print("\n⚠️ Interrompido pelo usuário")
+        duracao = (time.time() - inicio_sessao) / 60
+        print(f"\n\n⚠️  Loop interrompido pelo usuário após {ciclo_num} ciclos "
+              f"({total_ok} OK, {total_erros} erros) em {duracao:.1f} min")
         kill_existing_ssh()
-        # Tenta processar o que já foi gerado antes de sair
         if RESULTADO_CSV.exists():
-            print("  Processando resultado parcial...")
+            print("  Processando resultado parcial do último ciclo...")
             run_etl_processar_retorno()
-        return 1
-    except Exception as e:
-        print(f"\n❌ Erro inesperado: {e}")
-        kill_existing_ssh()
-        return 1
+        return 0
+
+    return 0
 
 if __name__ == "__main__":
     sys.exit(main())
