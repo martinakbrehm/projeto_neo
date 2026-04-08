@@ -82,8 +82,8 @@ def executar_auditoria(checks: list[str], so_tela: bool = False) -> int:
                 dados = modulo.rodar(cur)
                 linhas_fmt = modulo.formatar(dados)
                 todas_linhas.extend(linhas_fmt)
-                # Conta alertas
-                alertas_check = sum(1 for l in linhas_fmt if "[ATENCAO]" in l)
+                # Conta alertas (qualquer linha com [ATENCAO, independente do sufixo)
+                alertas_check = sum(1 for l in linhas_fmt if "[ATENCAO" in l)
                 if alertas_check:
                     total_alertas += alertas_check
                     todas_linhas.append(f"\n  >>> {alertas_check} alerta(s) neste check <<<")

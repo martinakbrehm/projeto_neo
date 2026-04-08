@@ -32,20 +32,24 @@ def rodar(cur) -> dict[str, Any]:
     resultado["orfaos_2h"] = cur.fetchall()
     resultado["total_orfaos_2h"] = len(resultado["orfaos_2h"])
 
-    # --- Taxa de reprocessar nos ultimos 7 dias ---
+    # --- Taxa de reprocessar nos ultimos 7 dias (apenas decisao real da API = com data_extracao) ---
     cur.execute("""
         SELECT
             COUNT(*) AS total_finalizados,
-            SUM(status = 'reprocessar') AS total_reprocessar
+            SUM(status = 'reprocessar' AND data_extracao IS NOT NULL) AS total_reprocessar_api,
+            SUM(status = 'reprocessar' AND data_extracao IS NULL)     AS total_reprocessar_orfao
         FROM tabela_macros
         WHERE data_update >= NOW() - INTERVAL 7 DAY
           AND status IN ('consolidado','excluido','reprocessar')
     """)
     row = cur.fetchone()
     total_fin = row[0] or 0
-    total_rep = row[1] or 0
-    resultado["reprocessar_7d"] = total_rep
-    resultado["taxa_reprocessar_7d"] = round(total_rep / total_fin * 100, 2) if total_fin else 0.0
+    total_rep_api  = row[1] or 0
+    total_rep_orf  = row[2] or 0
+    resultado["reprocessar_api_7d"]   = total_rep_api
+    resultado["reprocessar_orfao_7d"] = total_rep_orf
+    resultado["reprocessar_7d"] = total_rep_api + total_rep_orf
+    resultado["taxa_reprocessar_7d"] = round(total_rep_api / total_fin * 100, 2) if total_fin else 0.0
 
     # --- Ultima atividade no banco (data_update mais recente de consolidado/excluido) ---
     cur.execute("""
@@ -106,8 +110,10 @@ def formatar(r: dict[str, Any]) -> list[str]:
 
     # Taxa reprocessar
     taxa = r["taxa_reprocessar_7d"]
-    flag3 = " [ATENCAO - alta taxa]" if taxa > 15 else ""
-    linhas.append(f"\n  Taxa reprocessar (7 dias): {taxa:.1f}% ({r['reprocessar_7d']:,} registros){flag3}")
+    flag3 = " [ATENCAO - alta taxa API]" if taxa > 15 else ""
+    linhas.append(f"\n  Taxa reprocessar por decisao da API (7 dias): {taxa:.1f}%{flag3}")
+    linhas.append(f"    Com data_extracao (API decidiu reprocessar): {r['reprocessar_api_7d']:,}")
+    linhas.append(f"    Sem data_extracao (orfaos recuperados):       {r['reprocessar_orfao_7d']:,}  [INFO - comportamento esperado do mecanismo de recuperacao]")
 
     # Ultima atividade
     ua = r["ultima_atividade"]
