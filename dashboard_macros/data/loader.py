@@ -32,6 +32,7 @@ SQLs = {
         LEFT JOIN respostas      r  ON r.id  = m.resposta_id
         LEFT JOIN distribuidoras d  ON d.id  = m.distribuidora_id
         LEFT JOIN cliente_origem co ON co.cliente_id = m.cliente_id
+        WHERE m.data_extracao IS NOT NULL
     """,
 
     # Pipeline ativo apenas (deduplicado por CPF+UC via view)
@@ -52,6 +53,7 @@ SQLs = {
         LEFT JOIN respostas      r  ON r.id  = m.resposta_id
         LEFT JOIN distribuidoras d  ON d.id  = m.distribuidora_id
         LEFT JOIN cliente_origem co ON co.cliente_id = m.cliente_id
+        WHERE m.data_extracao IS NOT NULL
     """,
     "api": """
         SELECT
