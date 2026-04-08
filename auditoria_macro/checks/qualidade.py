@@ -138,8 +138,17 @@ def formatar(r: dict[str, Any]) -> list[str]:
     csde = r["consolidados_sem_data_extracao"]
     flag_csde = _flag("consolidados_sem_data_extracao", requisitos)
     nota_csde = _nota("consolidados_sem_data_extracao", requisitos)
+    req_csde  = requisitos.get("consolidados_sem_data_extracao", {})
+    baseline  = req_csde.get("baseline_historico", 0)
+
     if csde > 0:
         linhas.append(f"\n  {flag_csde} Consolidados sem data_extracao: {csde:,}")
+        if baseline:
+            novos = csde - baseline
+            if novos > 0:
+                linhas.append(f"  [ATENCAO] {novos:,} acima do baseline historico ({baseline:,}) — novos registros sem data_extracao!")
+            else:
+                linhas.append(f"         Baseline historico: {baseline:,} (migrados em {req_csde.get('data_migracao','?')}) — contagem OK")
         if nota_csde:
             linhas.append(f"         Justificativa: {nota_csde}")
     else:
