@@ -13,62 +13,63 @@ _CACHE: dict = {}  # cache por tipo {'macro': df, 'api': df}
 
 
 SQLs = {
-    # Dashboard analítico: todos os registros de tabela_macros com labels de respostas e distribuidoras.
-    # Usamos view_macros_automacao para o subconjunto do pipeline ativo (pendente/reprocessar) e
-    # fazemos UNION com view_macros_finalizados (consolidado) para cobrir todo o histórico importado.
-    # JOINs extras trazem empresa (distribuidoras.nome) e mensagem (respostas.mensagem).
+    # Dashboard analítico: todos os registros de tabela_macros com labels de respostas,
+    # distribuidoras e origem do cliente (fornecedor2 vs contatus, campanha/arquivo).
     "macro": """
         SELECT
             m.id,
-            DATE(m.data_update)  AS dia,
+            DATE(m.data_update)                          AS dia,
             m.data_update,
+            m.data_extracao,
             m.status,
             m.resposta_id,
             r.mensagem,
-            r.status           AS resposta_status,
-            d.nome             AS empresa
+            r.status                                     AS resposta_status,
+            d.nome                                       AS empresa,
+            COALESCE(co.fornecedor, 'fornecedor2')       AS fornecedor,
+            COALESCE(co.campanha,   'operacional')        AS campanha
         FROM tabela_macros m
-        LEFT JOIN respostas     r ON r.id = m.resposta_id
-        LEFT JOIN distribuidoras d ON d.id = m.distribuidora_id
+        LEFT JOIN respostas      r  ON r.id  = m.resposta_id
+        LEFT JOIN distribuidoras d  ON d.id  = m.distribuidora_id
+        LEFT JOIN cliente_origem co ON co.cliente_id = m.cliente_id
     """,
-    # TODO [improvements 20260406]: após aplicar db/improvements/20260406_cliente_origem_views_fornecedor/migration.py
-    # adicionar as seguintes chaves para filtro por fornecedor no dashboard:
-    #
-    # "fornecedor2_macro":  SELECT ... FROM view_fornecedor2_macro  + JOINs respostas/distribuidoras
-    # "fornecedor2_api":    SELECT ... FROM view_fornecedor2_api    + JOINs
-    # "contatus_macro":     SELECT ... FROM view_contatus_macro     + JOINs
-    # "contatus_api":       SELECT ... FROM view_contatus_api       + JOINs
-    #
-    # Ver README.md da migração para o SQL completo de cada query.
 
     # Pipeline ativo apenas (deduplicado por CPF+UC via view)
     "macro_pipeline": """
         SELECT
             m.id,
-            DATE(m.data_update)  AS dia,
+            DATE(m.data_update)                          AS dia,
             m.data_update,
+            m.data_extracao,
             m.status,
             m.resposta_id,
             r.mensagem,
-            r.status           AS resposta_status,
-            d.nome             AS empresa
+            r.status                                     AS resposta_status,
+            d.nome                                       AS empresa,
+            COALESCE(co.fornecedor, 'fornecedor2')       AS fornecedor,
+            COALESCE(co.campanha,   'operacional')        AS campanha
         FROM view_macros_automacao m
-        LEFT JOIN respostas     r ON r.id = m.resposta_id
-        LEFT JOIN distribuidoras d ON d.id = m.distribuidora_id
+        LEFT JOIN respostas      r  ON r.id  = m.resposta_id
+        LEFT JOIN distribuidoras d  ON d.id  = m.distribuidora_id
+        LEFT JOIN cliente_origem co ON co.cliente_id = m.cliente_id
     """,
     "api": """
         SELECT
             m.id,
-            DATE(m.data_update)  AS dia,
+            DATE(m.data_update)                          AS dia,
             m.data_update,
+            m.data_extracao,
             m.status,
             m.resposta_id,
             r.mensagem,
-            r.status           AS resposta_status,
-            d.nome             AS empresa
+            r.status                                     AS resposta_status,
+            d.nome                                       AS empresa,
+            COALESCE(co.fornecedor, 'fornecedor2')       AS fornecedor,
+            COALESCE(co.campanha,   'operacional')        AS campanha
         FROM tabela_macro_api m
-        LEFT JOIN respostas    r ON r.id = m.resposta_id
-        LEFT JOIN distribuidoras d ON d.id = m.distribuidora_id
+        LEFT JOIN respostas      r  ON r.id  = m.resposta_id
+        LEFT JOIN distribuidoras d  ON d.id  = m.distribuidora_id
+        LEFT JOIN cliente_origem co ON co.cliente_id = m.cliente_id
     """,
 }
 
@@ -95,6 +96,11 @@ def carregar_dados(tipo: str = "macro") -> pd.DataFrame:
         df = pd.DataFrame(rows, columns=cols)
         if not df.empty:
             df["dia"] = pd.to_datetime(df["dia"], errors="coerce").dt.date
+            # Calcula coluna "arquivo_origem":
+            # - sem data_extracao => dado veio de migracao historica
+            # - com data_extracao => usa campanha como identificador do arquivo/lote
+            sem_extracao = df["data_extracao"].isna() if "data_extracao" in df.columns else pd.Series(False, index=df.index)
+            df["arquivo_origem"] = df["campanha"].where(~sem_extracao, other="Migracao historica")
         _CACHE[tipo] = df
         return df.copy()
     except Exception as e:

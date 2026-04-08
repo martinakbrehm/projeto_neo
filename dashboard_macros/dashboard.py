@@ -66,6 +66,27 @@ app.layout = html.Div([
                         "fontWeight": "600", "cursor": "pointer"},
         ),
     ], style={"background": "#eaf4fb", "padding": "10px 16px", "borderRadius": "8px",
+              "marginBottom": "8px", "display": "flex", "alignItems": "center",
+              "boxShadow": "0 1px 4px rgba(44,62,80,0.08)"}),
+
+    # Seletor Fornecedor
+    html.Div([
+        html.Label("Fornecedor:", style={"fontWeight": "700", "fontSize": "14px",
+                                         "marginRight": "12px", "color": "#2c3e50"}),
+        dcc.RadioItems(
+            id="selector-fornecedor",
+            options=[
+                {"label": "  Todos",       "value": "todos"},
+                {"label": "  Fornecedor2", "value": "fornecedor2"},
+                {"label": "  Contatus",    "value": "contatus"},
+            ],
+            value="todos",
+            inline=True,
+            inputStyle={"marginRight": "6px", "cursor": "pointer"},
+            labelStyle={"marginRight": "24px", "fontFamily": "Roboto", "fontSize": "15px",
+                        "fontWeight": "600", "cursor": "pointer"},
+        ),
+    ], style={"background": "#f0f7f0", "padding": "10px 16px", "borderRadius": "8px",
               "marginBottom": "12px", "display": "flex", "alignItems": "center",
               "boxShadow": "0 1px 4px rgba(44,62,80,0.08)"}),
 
@@ -156,6 +177,38 @@ app.layout = html.Div([
 
         ], style={"width": "100%"}),
 
+        # Card: Arquivo de origem
+        html.Div([
+            html.H3("Registros por arquivo de origem",
+                    style={**SUBTITLE_STYLE, "marginTop": "0", "marginBottom": "8px"}),
+            html.P(
+                "Migracao historica = registros importados sem data de extracao (ETL manual). "
+                "Demais valores indicam o lote/campanha do pipeline automatico.",
+                style={"fontSize": "13px", "color": "#666", "marginBottom": "10px"}
+            ),
+            dash_table.DataTable(
+                id="tabela-origens",
+                columns=[
+                    {"name": "Arquivo / Origem", "id": "arquivo_origem"},
+                    {"name": "Quantidade",        "id": "quantidade"},
+                ],
+                data=[],
+                style_table={"overflowX": "auto", "borderRadius": "8px",
+                             "boxShadow": "0 2px 8px #e0e0e0", "marginTop": "4px"},
+                style_cell={"textAlign": "left", "fontFamily": "Roboto", "fontSize": "14px",
+                            "padding": "8px", "whiteSpace": "normal", "height": "auto"},
+                style_header={"backgroundColor": "#27ae60", "color": "white",
+                               "fontWeight": "bold", "fontFamily": "Roboto", "fontSize": "15px"},
+                style_data_conditional=[
+                    {"if": {"row_index": "odd"}, "backgroundColor": "#fafafa"},
+                    {"if": {"filter_query": '{arquivo_origem} = "Migracao historica"'},
+                     "backgroundColor": "#fef9e7", "fontStyle": "italic"},
+                ],
+                page_size=10,
+            ),
+        ], style={"background": "#fff", "borderRadius": "8px", "boxShadow": "0 2px 8px #e0e0e0",
+                  "padding": "16px", "marginBottom": "18px"}),
+
     ], style={"background": "#f4f6f8", "padding": "28px", "borderRadius": "10px", "marginBottom": "32px"})),
 
     html.Div(style={"height": "8px"}),
@@ -176,19 +229,26 @@ app.layout = html.Div([
         dash.dependencies.Output("filtro-empresa-dropdown","value"),
         dash.dependencies.Output("info-registros",         "children"),
     ],
-    [dash.dependencies.Input("selector-tipo-macro", "value")]
+    [
+        dash.dependencies.Input("selector-tipo-macro",  "value"),
+        dash.dependencies.Input("selector-fornecedor",  "value"),
+    ]
 )
-def atualizar_opcoes_filtros(tipo_macro):
+def atualizar_opcoes_filtros(tipo_macro, fornecedor):
     tipo = tipo_macro or "macro"
+    filtro_forn = fornecedor if fornecedor and fornecedor != "todos" else None
     df = loader.carregar_dados(tipo)
     if df.empty:
         return [], None, [], None, f"Sem dados para {tipo.upper()}"
-    opcoes_dia     = sorted(df["dia"].dropna().unique())
-    opcoes_empresa = sorted(df["empresa"].dropna().unique()) if "empresa" in df.columns else []
+    dff = df[df["fornecedor"] == filtro_forn] if filtro_forn and "fornecedor" in df.columns else df
+    opcoes_dia     = sorted(dff["dia"].dropna().unique())
+    opcoes_empresa = sorted(dff["empresa"].dropna().unique()) if "empresa" in dff.columns else []
+    label_forn = f" | Fornecedor: {filtro_forn}" if filtro_forn else ""
     info = (
-        f"Registros: {len(df):,}  |  "
+        f"Registros: {len(dff):,}  |  "
         f"Dias: {len(opcoes_dia)}  |  "
         f"Empresas: {len(opcoes_empresa)}"
+        f"{label_forn}"
     )
     return (
         [{"label": str(d), "value": str(d)} for d in opcoes_dia],
@@ -203,34 +263,39 @@ def atualizar_opcoes_filtros(tipo_macro):
     [
         dash.dependencies.Output("tabela-resumo",    "data"),
         dash.dependencies.Output("tabela-mensagens", "data"),
+        dash.dependencies.Output("tabela-origens",   "data"),
     ],
     [
         dash.dependencies.Input("resumo-dia-dropdown",     "value"),
         dash.dependencies.Input("filtro-empresa-dropdown", "value"),
         dash.dependencies.Input("selector-tipo-macro",     "value"),
+        dash.dependencies.Input("selector-fornecedor",     "value"),
     ]
 )
-def atualizar_dashboard(resumo_sel, filtro_empresa, tipo_macro):
+def atualizar_dashboard(resumo_sel, filtro_empresa, tipo_macro, fornecedor):
     tipo = tipo_macro or "macro"
+    filtro_forn = fornecedor if fornecedor and fornecedor != "todos" else None
     try:
-        data_resumo, data_mensagens = orchestrator.build_dashboard_data(
-            resumo_sel, filtro_empresa, tipo_macro=tipo
+        data_resumo, data_mensagens, data_origens = orchestrator.build_dashboard_data(
+            resumo_sel, filtro_empresa, tipo_macro=tipo, filtro_fornecedor=filtro_forn
         )
     except Exception:
         data_resumo = []
         data_mensagens = []
-    return data_resumo, data_mensagens
+        data_origens = []
+    return data_resumo, data_mensagens, data_origens
 
 
 @app.server.route("/_debug/data")
 def debug_data():
     try:
-        data_resumo, data_mensagens = orchestrator.build_dashboard_data(
+        data_resumo, data_mensagens, data_origens = orchestrator.build_dashboard_data(
             [], [], tipo_macro="macro"
         )
         return jsonify({
             "data_resumo":    data_resumo,
             "data_mensagens": data_mensagens,
+            "data_origens":   data_origens,
         })
     except Exception as e:
         return jsonify({"error": str(e)})
