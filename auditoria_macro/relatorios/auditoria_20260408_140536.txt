@@ -1,0 +1,102 @@
+========================================================================
+  AUDITORIA DA MACRO  —  08/04/2026 14:05:36
+------------------------------------------------------------------------
+  Projeto: C:\Users\marti\Desktop\Bases fornecedor novo\pipeline_bases_neo\projeto_banco_neo
+  Checks:  volume, status, qualidade, salvamento
+========================================================================
+
+========================================================================
+  CHECK: VOLUME
+------------------------------------------------------------------------
+== VOLUME ==
+  Total de registros: 188,730
+    pendente          59,131  ( 31.3%)
+    processando          110  (  0.1%)
+    reprocessar       37,481  ( 19.9%)
+    consolidado       90,039  ( 47.7%)
+    excluido           1,969  (  1.0%)
+
+  Processados nas ultimas 24h: 9,655
+    reprocessar        7,995
+    consolidado          255
+    excluido           1,405
+
+  Ritmo medio (ultimas 6h): 1588.0 registros/hora
+
+  Tendencia (ultimos 7 dias):
+    2026-04-07  consolidado=    20  excluido=   369  total=   389
+    2026-04-08  consolidado=   235  excluido= 1,302  total= 1,537
+
+========================================================================
+  CHECK: STATUS
+------------------------------------------------------------------------
+== STATUS E INTEGRIDADE ==
+  Presos em 'processando': 110 [ATENCAO]
+  Orfaos (processando > 2h): 0
+
+  Taxa reprocessar (7 dias): 85.2% (11,082 registros) [ATENCAO - alta taxa]
+
+  Ultima atividade (consolidado/excluido): 08/04/2026 17:04:17
+
+  Atividade por hora (ultimas 12h):
+    2026-04-08 14:00      28  ##
+    2026-04-08 15:00     388  ######################################
+    2026-04-08 16:00   1,019  ##################################################
+    2026-04-08 17:00     102  ##########
+
+  Consistencia resposta_id: OK
+
+  >>> 1 alerta(s) neste check <<<
+
+========================================================================
+  CHECK: QUALIDADE
+------------------------------------------------------------------------
+== QUALIDADE DOS DADOS ==
+  Hoje: consolidados=235  excluidos=1,302  total=1,537
+  [ATENCAO] Taxa de exclusao hoje muito alta: 84.7%
+
+  Duplicatas ativas (pendente/processando/reprocessar): 10 [ATENCAO]
+    cliente_id=65594  distrib=3  qtd=3
+    cliente_id=57488  distrib=3  qtd=3
+    cliente_id=47767  distrib=3  qtd=3
+    cliente_id=81118  distrib=3  qtd=3
+    cliente_id=65310  distrib=3  qtd=3
+
+  [ATENCAO] Consolidados sem data_extracao: 89,784
+
+  Por distribuidora:
+    celpe                consolidado=44,266  excluido=1,785  pendente=14,863  reprocessar=25,217
+    coelba               consolidado=25,373  excluido=17  pendente=33,410  reprocessar=6,222
+    cosern               consolidado=20,400  excluido=167  pendente=10,858  reprocessar=6,042
+
+  Top respostas API (ultimos 7 dias):
+    [excluir     ]   1,298  Conta Contrato nao existe
+    [excluir     ]     373  Doc. fiscal não existe
+    [consolidado ]     255  Titularidade confirmada com contrato ativo
+
+  >>> 3 alerta(s) neste check <<<
+
+========================================================================
+  CHECK: SALVAMENTO
+------------------------------------------------------------------------
+== SALVAMENTO E ARQUIVOS DE LOTE ==
+  Lotes arquivados no disco: 27
+  Ultimo lote arquivado:     lote_meta_20260408_140417.json
+
+  resultado_lote.csv: nao existe (normal se nao ha lote pendente)
+
+  Atualizacoes no banco:
+    Ultima hora: 3,281
+    Ultimas 6h:  9,528
+    Ultimo update: 17:04:17
+
+  Lotes recentes (metadados):
+    lote_meta_20260408_140417.json  n=?
+    lote_meta_20260408_135957.json  n=?
+    lote_meta_20260408_135529.json  n=?
+    lote_meta_20260408_135104.json  n=?
+    lote_meta_20260408_134650.json  n=?
+
+========================================================================
+  RESULTADO: 4 ALERTA(S) DETECTADO(S) — revisar itens marcados com [ATENCAO]
+========================================================================
