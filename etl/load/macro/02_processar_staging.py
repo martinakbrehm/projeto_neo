@@ -45,7 +45,7 @@ DISTRIBUIDORA_MAP = {
 
 # resposta_id 6 = 'Aguardando processamento' / status 'pendente'
 RESPOSTA_PENDENTE = 6
-BATCH = 2000
+BATCH = 500
 SEP = "=" * 70
 
 
@@ -324,14 +324,15 @@ def processar_staging(conn, staging_id: int, dry_run: bool) -> dict:
 
             # cliente_origem para os recém inseridos
             rows_orig = [
-                (cpf_map[c], "fornecedor2", "operacional", data_criacao)
+                (cpf_map[c], "fornecedor2", filepath.name, data_criacao)
                 for c in novos_cpfs if c in cpf_map
             ]
             if rows_orig:
                 cur_w.executemany(
-                    "INSERT IGNORE INTO cliente_origem"
+                    "INSERT INTO cliente_origem"
                     " (cliente_id, fornecedor, campanha, data_import)"
-                    " VALUES (%s, %s, %s, %s)",
+                    " VALUES (%s, %s, %s, %s)"
+                    " ON DUPLICATE KEY UPDATE campanha=VALUES(campanha)",
                     rows_orig,
                 )
         else:
