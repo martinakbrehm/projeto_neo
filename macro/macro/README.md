@@ -1,82 +1,217 @@
-# Neo Energia - Script de Consulta Automática
+# Neo Energia — Macro de Consulta de Titularidade
 
-Este projeto automatiza o processo de consulta de contratos na API da Neo Energia através de túnel SSH.
+Automação do ciclo completo de consulta de contratos na API Neo Energia:  
+**banco → SSH + túnel → API → banco**
 
-## 📋 Pré-requisitos
+> Para detalhes técnicos, decisões de arquitetura e histórico de testes, veja [DIARIO_TECNICO.md](DIARIO_TECNICO.md).
 
-- Python 3.7+
-- **PuTTY (plink) instalado no Windows** - [Como instalar](#-instalação-do-putty)
-- Acesso SSH ao servidor
-- Credenciais de acesso
+---
 
-### 🔧 Instalação do PuTTY
+## Início rápido (nova máquina)
 
-O PuTTY **não vem instalado por padrão** no Windows. Escolha uma das opções:
+### Pré-requisitos
 
-#### Opção 1: Instalador Oficial (Recomendado)
-1. Acesse: https://www.putty.org/
-2. Baixe o instalador Windows (.msi)
-3. Execute o instalador como Administrador
-4. O `plink.exe` ficará disponível no PATH automaticamente
+| Requisito | Windows | Linux |
+|---|---|---|
+| Python 3.7+ | [python.org](https://www.python.org/downloads/) | `apt install python3` |
+| plink (SSH) | incluído na pasta como `plink.exe` | `apt install sshpass` |
 
-#### Opção 2: Chocolatey (se você usa)
+> **Não é necessário instalar o PuTTY** — o `plink.exe` já está incluído na pasta `macro/macro/`.
+
+---
+
+### Passo 1 — Clonar / copiar o projeto
+
 ```powershell
-choco install putty
+# Se via Git:
+git clone https://github.com/martinakbrehm/projeto_neo.git
+cd projeto_neo/macro/macro
 ```
 
-#### Opção 3: Winget (Windows 10/11)
-```powershell
-winget install PuTTY.PuTTY
+---
+
+### Passo 2 — Criar o ambiente virtual
+
+```bat
+# Windows:
+setup_venv.bat
+
+# Linux:
+bash setup_venv.sh
 ```
 
-#### Opção 4: Download Direto
-1. Baixe apenas o `plink.exe` de: https://the.earth.li/~sgtatham/putty/latest/w64/plink.exe
-2. Coloque na pasta do projeto ou em uma pasta no PATH
+Isso cria `.venv/` com todas as dependências do `requirements.txt`.
 
-**⚠️ Importante**: Após a instalação, abra um novo terminal para que o `plink` seja reconhecido.
+---
 
-## 🚀 Instalação
+### Passo 3 — Configurar as credenciais
 
-1. Clone ou baixe o projeto
-2. Copie o arquivo `.env.example` para `.env`
-3. Edite o arquivo `.env` com suas credenciais:
+```bat
+# Windows:
+copy .env.example .env
+
+# Linux:
+cp .env.example .env
+```
+
+Edite `.env` e preencha:
 
 ```env
-SSH_USER=seu_usuario
-SSH_SERVER=seu_servidor_ssh
+SSH_USER=root
+SSH_SERVER=191.252.200.81       # IP do servidor SSH
 SSH_PASSWORD=sua_senha
+SSH_HOST_KEY=ssh-ed25519 255 SHA256:85SZsIcG+...   # fingerprint
 LOCAL_PORT=5000
-REMOTE_HOST=ip_do_host_remoto
+REMOTE_HOST=10.219.11.156       # IP da API dentro da rede
 REMOTE_PORT=80
 ```
 
-4. Instale as dependências:
-```bash
-pip install -r requirements.txt
+> **Como obter o `SSH_HOST_KEY`:** execute `plink.exe -pw SENHA root@SERVIDOR "echo ok"` uma vez e copie a fingerprint exibida.
+
+---
+
+### Passo 4 — Executar
+
+```bat
+# Windows — modo normal (lote padrão de 2000 registros):
+EXECUTAR.bat
+
+# Com tamanho de lote customizado:
+EXECUTAR.bat --tamanho 500
+
+# Dry-run (só busca o lote, não consulta a API nem grava):
+EXECUTAR.bat --dry-run
+
+# Linux:
+.venv/bin/python executar_automatico.py
+.venv/bin/python executar_automatico.py --tamanho 500
+.venv/bin/python executar_automatico.py --dry-run
 ```
 
-## 🔧 Uso
+---
 
-Execute o script principal:
-```bash
-python executar_automatico.py
+## Abrir o túnel manualmente
+
+Para usar `consulta_contrato.py` de forma independente (sem o orquestrador), abra o túnel em um terminal separado:
+
+```bat
+# Windows — abre e mantém o túnel aberto:
+TUNEL_MANUAL.bat
+
+# Ou diretamente:
+plink.exe -batch -pw "SUA_SENHA" -hostkey "ssh-ed25519 255 SHA256:..." ^
+    -L 5000:10.219.11.156:80 root@191.252.200.81 -N
 ```
 
-O script irá automaticamente:
-1. Verificar e ativar a VPN no servidor
-2. Criar túnel SSH
-3. Testar a conectividade da API
-4. Executar o script de consulta
-5. Limpar as conexões
+```bash
+# Linux:
+sshpass -p "SUA_SENHA" ssh -N \
+    -o StrictHostKeyChecking=no \
+    -L 5000:10.219.11.156:80 \
+    root@191.252.200.81
+```
 
-## 📁 Estrutura do Projeto
+Com o túnel ativo, rode em outro terminal:
 
-- `executar_automatico.py` - Script principal de automação
-- `consulta_contrato.py` - Script de consulta de contratos
-- `.env` - Arquivo de configurações (não versionado)
-- `.env.example` - Template de configurações
-- `requirements.txt` - Dependências do Python
-- `.gitignore` - Arquivos ignorados pelo Git
+```bat
+# Com lote CSV já gerado:
+.venv\Scripts\python.exe consulta_contrato.py ^
+    --arquivo ..\dados\lote_pendente.csv ^
+    --saida ..\dados\resultado_lote.csv
+```
+
+---
+
+## Estrutura da pasta
+
+```
+macro/macro/
+├── .env                    # Credenciais (NÃO versionado)
+├── .env.example            # Template de credenciais (versionado)
+├── .gitignore              # Garante que .env não suba ao Git
+├── .venv/                  # Ambiente virtual Python (NÃO versionado)
+│
+├── executar_automatico.py  # Orquestrador: ETL + SSH + macro + ETL
+├── consulta_contrato.py    # Consulta à API (passo 2)
+│
+├── EXECUTAR.bat            # Lançador Windows (repassa argumentos)
+├── TUNEL_MANUAL.bat        # Abre só o túnel SSH (uso manual)
+├── setup_venv.bat          # Configura venv no Windows
+├── setup_venv.sh           # Configura venv no Linux
+│
+├── plink.exe               # Cliente SSH portável (PuTTY)
+├── requirements.txt        # Dependências pinadas
+│
+├── README.md               # Este arquivo
+├── DIARIO_TECNICO.md       # Decisões, testes, inspeções técnicas
+├── CONFIGURACAO.md         # Guia detalhado de instalação e configuração
+│
+└── _legado/                # Arquivos descontinuados (apenas referência histórica)
+    ├── README.md           # Descrição de cada arquivo legado
+    ├── executar_automatico_backup.py
+    ├── muito_rapido_tratado.py
+    ├── demora.py
+    └── cli.txt
+```
+
+```
+macro/dados/
+├── lote_pendente.csv       # Gerado pelo passo 1 (NÃO versionado)
+├── resultado_lote.csv      # Gerado pelo passo 2 (NÃO versionado)
+└── arquivo/                # Arquivos arquivados após ciclo (NÃO versionado)
+```
+
+---
+
+## O que o orquestrador faz (ciclo completo)
+
+1. **Passo 1 — EXTRACTION** (`03_buscar_lote_macro.py`)  
+   Busca registros com `status='pendente'` ou `'reprocessar'` em `tabela_macros`, priorizando `fornecedor2`. Exporta `lote_pendente.csv`.
+
+2. **Passo 2a — VPN + Túnel SSH**  
+   Verifica/ativa a VPN no servidor (`ipsec up vpn`) e abre o túnel `localhost:5000 → API`.
+
+3. **Passo 2b — MACRO** (`consulta_contrato.py`)  
+   Lê `lote_pendente.csv`, consulta a API para cada contrato, salva `resultado_lote.csv`.
+
+4. **Limpeza** — Encerra VPN e túnel SSH.
+
+5. **Passo 3 — LOAD** (`04_processar_retorno_macro.py`)  
+   Lê `resultado_lote.csv`, interpreta respostas e atualiza `tabela_macros` no banco.
+
+---
+
+## Volumes e tempo estimado
+
+| Lote | Registros | Tempo estimado |
+|---|---|---|
+| Teste | 50 | ~5 min |
+| Operacional | 500 | ~30 min |
+| Carga | 2000 | ~2–4 horas |
+
+---
+
+## Validação antes de rodar
+
+Do diretório raiz do projeto:
+
+```powershell
+python _validar_macro.py
+```
+
+Verifica: banco, qualidade de dados, `.env`, venv, scripts ETL, SSH e túnel. Saída: `PRONTA PARA PRODUÇÃO` ou lista de problemas.
+
+---
+
+## Troubleshooting
+
+| Problema | Causa provável | Solução |
+|---|---|---|
+| `plink: comando não encontrado` | plink não está no PATH | Use `.\plink.exe` (está na pasta) |
+| Túnel não estabiliza | Porta já em uso | Feche processos plink anteriores: `taskkill /IM plink.exe /F` |
+| API não responde | VPN não ativou | Verifique VPN no servidor: `plink ... "ipsec status"` |
+| `ModuleNotFoundError` | Dependência faltando no venv | Execute `setup_venv.bat` novamente |
+| Exit Code 1 no plink foreground | Comportamento normal no PS | Use `EXECUTAR.bat` ou via `subprocess.Popen` (orquestrador faz isso) |
 
 ## 🔒 Segurança
 

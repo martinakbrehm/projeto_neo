@@ -1,7 +1,10 @@
-# Credenciais – NUNCA versionar
+# Credenciais -- NUNCA versionar
 config.py
 .env
 macro/macro/.env
+macro/macro/.env.local
+macro/macro/.env.production
+!macro/macro/.env.example
 
 # Python
 __pycache__/
@@ -9,11 +12,22 @@ __pycache__/
 *.pyo
 .venv/
 venv/
+macro/macro/.venv/
+macro/macro/__pycache__/
+macro/macro/.pytest_cache/
 
-# Dados — NUNCA versionar (arquivos de clientes/operacional)
+# Dados do projeto -- NUNCA versionar (arquivos de clientes/operacional)
 dados/
 
-# Macro — ambiente virtual e arquivos transientes de lote
+# Macro -- todos os arquivos de dados gerados pelo ciclo (lotes, resultados, arquivos)
+macro/dados/*.csv
+macro/dados/*.json
+macro/dados/arquivo/
+
+# Scripts temporarios de validacao
+_validar_macro.py
+temp_check.py
+temp_explain.py
 
 # Logs
 *.log

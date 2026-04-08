@@ -45,7 +45,7 @@ DISTRIBUIDORA_MAP = {
 
 # resposta_id 6 = 'Aguardando processamento' / status 'pendente'
 RESPOSTA_PENDENTE = 6
-BATCH = 500
+BATCH = 2000
 SEP = "=" * 70
 
 
@@ -246,122 +246,31 @@ def processar_staging(conn, staging_id: int, dry_run: bool) -> dict:
         "erros": 0,
     }
 
-    # Conexão de escrita dedicada — reconectada a cada commit para evitar timeout
+    # Conexão de escrita única — sem reconexão por batch (timeout já é 600s)
     conn_w = conectar()
     cur_w  = conn_w.cursor()
 
     # Filtra apenas as linhas válidas
     df_validas = df[df.index.isin(valid_rows.keys())]
-    processadas_idx = []
+    all_idxs   = list(df_validas.index)
 
-    for idx, row in df_validas.iterrows():
-        norm_c = valid_rows.get(idx)
-        uc = norm_uc(row.get("uc"))
+    for chunk_start in range(0, len(all_idxs), BATCH):
+        chunk_idxs = all_idxs[chunk_start : chunk_start + BATCH]
+        chunk_df   = df_validas.loc[chunk_idxs]
 
-        if not norm_c or not uc:
-            stats["erros"] += 1
-            continue
+        # ── FASE 0: parsear o chunk ──────────────────────────────────────
+        parsed = []
+        for idx, row in chunk_df.iterrows():
+            norm_c = valid_rows.get(idx)
+            uc     = norm_uc(row.get("uc"))
+            if not norm_c or not uc:
+                stats["erros"] += 1
+                continue
 
-        nome = norm_str(row.get("nome"), 255)
-
-        # clientes
-        if norm_c not in cpf_map:
-            if not dry_run:
-                cur_w.execute(
-                    "INSERT IGNORE INTO clientes (cpf, nome, data_criacao)"
-                    " VALUES (%s, %s, %s)",
-                    (norm_c, nome, data_criacao),
-                )
-                if cur_w.rowcount:
-                    cpf_map[norm_c] = cur_w.lastrowid
-                    stats["clientes_novos"] += 1
-                    # Registra proveniência na tabela cliente_origem (migration 20260406)
-                    cur_w.execute(
-                        "INSERT IGNORE INTO cliente_origem"
-                        " (cliente_id, fornecedor, campanha, data_import)"
-                        " VALUES (%s, 'fornecedor2', 'operacional', %s)",
-                        (cpf_map[norm_c], data_criacao),
-                    )
-                else:
-                    cur_w.execute("SELECT id FROM clientes WHERE cpf=%s", (norm_c,))
-                    r2 = cur_w.fetchone()
-                    cpf_map[norm_c] = r2[0] if r2 else None
-            else:
-                cpf_map[norm_c] = -(idx + 1)
-                stats["clientes_novos"] += 1
-
-        cliente_id = cpf_map.get(norm_c)
-        if not cliente_id:
-            stats["erros"] += 1
-            continue
-
-        # ------------------------------------------------------------------
-        # cliente_uc (INSERT IGNORE → get id)
-        # ------------------------------------------------------------------
-        # chave inclui distribuidora_id (migration 20260406)
-        chave_uc = (cliente_id if cliente_id > 0 else 0, uc, distrib_id)
-        if chave_uc not in uc_map:
-            if not dry_run:
-                cur_w.execute(
-                    "INSERT IGNORE INTO cliente_uc"
-                    " (cliente_id, uc, distribuidora_id, data_criacao)"
-                    " VALUES (%s, %s, %s, %s)",
-                    (cliente_id, uc, distrib_id, data_criacao),
-                )
-                if cur_w.rowcount:
-                    uc_map[chave_uc] = cur_w.lastrowid
-                    stats["uc_novas"] += 1
-                else:
-                    cur_w.execute(
-                        "SELECT id FROM cliente_uc"
-                        " WHERE cliente_id=%s AND uc=%s AND distribuidora_id=%s",
-                        (cliente_id, uc, distrib_id),
-                    )
-                    r2 = cur_w.fetchone()
-                    uc_map[chave_uc] = r2[0] if r2 else None
-            else:
-                uc_map[chave_uc] = -(idx + 1)
-                stats["uc_novas"] += 1
-
-        cliente_uc_id = uc_map.get(chave_uc)
-
-        # ------------------------------------------------------------------
-        # tabela_macros (INSERT se não existir pendente hoje)
-        # ------------------------------------------------------------------
-        chave_macro = (cliente_id if cliente_id > 0 else 0, distrib_id)
-        if chave_macro not in macros_hoje:
-            if not dry_run:
-                cur_w.execute(
-                    "INSERT INTO tabela_macros"
-                    " (cliente_id, distribuidora_id, resposta_id, status, data_criacao)"
-                    " VALUES (%s, %s, %s, 'pendente', %s)",
-                    (cliente_id, distrib_id, RESPOSTA_PENDENTE, data_criacao),
-                )
-            macros_hoje.add(chave_macro)
-            stats["macros_novas"] += 1
-
-        # ------------------------------------------------------------------
-        # telefones (dedup por cliente_id + número)
-        # ------------------------------------------------------------------
-        for col in tel_cols:
-            tel_val, tipo = norm_telefone(row.get(col))
-            if tel_val:
-                chave_tel = (cliente_id if cliente_id > 0 else 0, tel_val)
-                if chave_tel not in tel_set:
-                    if not dry_run:
-                        cur_w.execute(
-                            "INSERT INTO telefones"
-                            " (cliente_id, telefone, tipo, data_criacao)"
-                            " VALUES (%s, %s, %s, %s)",
-                            (cliente_id, tel_val, tipo, data_criacao),
-                        )
-                    tel_set.add(chave_tel)
-                    stats["telefones"] += 1
-
-        # ------------------------------------------------------------------
-        # enderecos (dedup por cliente_uc_id + cep)
-        # ------------------------------------------------------------------
-        if cliente_uc_id and (not dry_run or cliente_uc_id < 0):
+            # endereço
+            cep    = norm_str(row.get("cep"), 20)
+            cidade = norm_str(row.get("cidade"), 100)
+            uf     = norm_uf(row.get("uf"))
             if tem_campos_separados:
                 logradouro = norm_str(row.get("endereco"), 255)
                 numero     = norm_str(row.get("numero"), 50)
@@ -372,69 +281,199 @@ def processar_staging(conn, staging_id: int, dry_run: bool) -> dict:
                 numero     = p["numero"]
                 bairro     = p["bairro"]
 
-            cep    = norm_str(row.get("cep"), 20)
-            cidade = norm_str(row.get("cidade"), 100)
-            uf     = norm_uf(row.get("uf"))
-            cep_key = cep or ""
+            # telefones
+            tels = []
+            for col in tel_cols:
+                tel_val, tipo = norm_telefone(row.get(col))
+                if tel_val:
+                    tels.append((tel_val, tipo))
 
-            uc_id_real = cliente_uc_id if not dry_run else 1
-            chave_end = (uc_id_real, cep_key)
+            parsed.append({
+                "idx": idx,
+                "cpf": norm_c,
+                "uc": uc,
+                "nome": norm_str(row.get("nome"), 255),
+                "tels": tels,
+                "logradouro": logradouro, "numero": numero, "bairro": bairro,
+                "cep": cep, "cidade": cidade, "uf": uf,
+            })
 
-            if logradouro and chave_end not in end_set:
-                if not dry_run:
-                    cur_w.execute(
-                        "INSERT INTO enderecos"
-                        " (cliente_id, cliente_uc_id, distribuidora_id,"
-                        "  endereco, numero, bairro, cidade, uf, cep, data_criacao)"
-                        " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-                        (
-                            cliente_id, uc_id_real, distrib_id,
-                            logradouro, numero, bairro, cidade, uf, cep,
-                            data_criacao,
-                        ),
-                    )
+        if not parsed:
+            continue
+
+        # ── FASE 1: clientes — executemany INSERT IGNORE + bulk SELECT ────
+        cpfs_chunk = {d["cpf"] for d in parsed}
+        novos_cpfs = cpfs_chunk - cpf_map.keys()
+
+        if not dry_run:
+            if novos_cpfs:
+                nome_por_cpf = {d["cpf"]: d["nome"] for d in parsed}
+                cur_w.executemany(
+                    "INSERT IGNORE INTO clientes (cpf, nome, data_criacao)"
+                    " VALUES (%s, %s, %s)",
+                    [(c, nome_por_cpf[c], data_criacao) for c in novos_cpfs],
+                )
+                stats["clientes_novos"] += cur_w.rowcount
+
+            ph = ",".join(["%s"] * len(cpfs_chunk))
+            cur_w.execute(
+                f"SELECT id, cpf FROM clientes WHERE cpf IN ({ph})",
+                list(cpfs_chunk),
+            )
+            cpf_map.update({r[1]: r[0] for r in cur_w.fetchall()})
+
+            # cliente_origem para os recém inseridos
+            rows_orig = [
+                (cpf_map[c], "fornecedor2", "operacional", data_criacao)
+                for c in novos_cpfs if c in cpf_map
+            ]
+            if rows_orig:
+                cur_w.executemany(
+                    "INSERT IGNORE INTO cliente_origem"
+                    " (cliente_id, fornecedor, campanha, data_import)"
+                    " VALUES (%s, %s, %s, %s)",
+                    rows_orig,
+                )
+        else:
+            for i, d in enumerate(parsed):
+                if d["cpf"] not in cpf_map:
+                    cpf_map[d["cpf"]] = -(chunk_start + i + 1)
+                    stats["clientes_novos"] += 1
+
+        # ── FASE 2: cliente_uc — executemany INSERT IGNORE + bulk SELECT ──
+        chaves_uc_chunk = set()
+        for d in parsed:
+            cid = cpf_map.get(d["cpf"])
+            if cid:
+                chaves_uc_chunk.add((cid if cid > 0 else 0, d["uc"], distrib_id))
+
+        novas_ucs = chaves_uc_chunk - uc_map.keys()
+
+        if not dry_run:
+            if novas_ucs:
+                cur_w.executemany(
+                    "INSERT IGNORE INTO cliente_uc"
+                    " (cliente_id, uc, distribuidora_id, data_criacao)"
+                    " VALUES (%s, %s, %s, %s)",
+                    [(cid, u, did, data_criacao) for cid, u, did in novas_ucs],
+                )
+                stats["uc_novas"] += cur_w.rowcount
+
+            if chaves_uc_chunk:
+                cids_chunk = {tpl[0] for tpl in chaves_uc_chunk}
+                ph = ",".join(["%s"] * len(cids_chunk))
+                cur_w.execute(
+                    f"SELECT id, cliente_id, uc, distribuidora_id FROM cliente_uc"
+                    f" WHERE cliente_id IN ({ph}) AND distribuidora_id=%s",
+                    list(cids_chunk) + [distrib_id],
+                )
+                for r in cur_w.fetchall():
+                    k = (r[1], r[2], r[3])
+                    if k in chaves_uc_chunk:
+                        uc_map[k] = r[0]
+        else:
+            for i, chave in enumerate(novas_ucs):
+                uc_map[chave] = -(chunk_start + i + 1)
+                stats["uc_novas"] += 1
+
+        # ── FASE 3: tabela_macros — executemany INSERT ────────────────────
+        rows_macros = []
+        for d in parsed:
+            cid = cpf_map.get(d["cpf"])
+            if not cid:
+                continue
+            chave_macro = (cid if cid > 0 else 0, distrib_id)
+            if chave_macro not in macros_hoje:
+                rows_macros.append((cid, distrib_id, RESPOSTA_PENDENTE, data_criacao))
+                macros_hoje.add(chave_macro)
+                stats["macros_novas"] += 1
+
+        if rows_macros and not dry_run:
+            cur_w.executemany(
+                "INSERT INTO tabela_macros"
+                " (cliente_id, distribuidora_id, resposta_id, status, data_criacao)"
+                " VALUES (%s, %s, %s, 'pendente', %s)",
+                rows_macros,
+            )
+
+        # ── FASE 4: telefones — executemany INSERT ────────────────────────
+        rows_tels = []
+        for d in parsed:
+            cid = cpf_map.get(d["cpf"])
+            if not cid:
+                continue
+            cid_key = cid if cid > 0 else 0
+            for tel_val, tipo in d["tels"]:
+                chave_tel = (cid_key, tel_val)
+                if chave_tel not in tel_set:
+                    rows_tels.append((cid, tel_val, tipo, data_criacao))
+                    tel_set.add(chave_tel)
+                    stats["telefones"] += 1
+
+        if rows_tels and not dry_run:
+            cur_w.executemany(
+                "INSERT INTO telefones (cliente_id, telefone, tipo, data_criacao)"
+                " VALUES (%s, %s, %s, %s)",
+                rows_tels,
+            )
+
+        # ── FASE 5: enderecos — executemany INSERT ────────────────────────
+        rows_ends = []
+        for d in parsed:
+            cid = cpf_map.get(d["cpf"])
+            if not cid or not d["logradouro"]:
+                continue
+            cid_key = cid if cid > 0 else 0
+            chave_uc = (cid_key, d["uc"], distrib_id)
+            uc_id    = uc_map.get(chave_uc)
+            if not uc_id:
+                continue
+            uc_id_real = uc_id if not dry_run else 1
+            cep_key    = d["cep"] or ""
+            chave_end  = (uc_id_real, cep_key)
+            if chave_end not in end_set:
+                rows_ends.append((
+                    cid, uc_id_real, distrib_id,
+                    d["logradouro"], d["numero"], d["bairro"],
+                    d["cidade"], d["uf"], d["cep"], data_criacao,
+                ))
                 end_set.add(chave_end)
                 stats["enderecos"] += 1
 
-        stats["processadas"] += 1
-        processadas_idx.append(idx)
+        if rows_ends and not dry_run:
+            cur_w.executemany(
+                "INSERT INTO enderecos"
+                " (cliente_id, cliente_uc_id, distribuidora_id,"
+                "  endereco, numero, bairro, cidade, uf, cep, data_criacao)"
+                " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                rows_ends,
+            )
 
-        # Commit e progresso a cada BATCH linhas — reconecta para evitar timeout
-        if len(processadas_idx) >= BATCH and not dry_run:
-            placeholders = ",".join(["%s"] * len(processadas_idx))
+        # ── FASE 6: checkpoint + commit ───────────────────────────────────
+        chunk_processed = [d["idx"] for d in parsed]
+        stats["processadas"] += len(chunk_processed)
+
+        if not dry_run:
+            ph = ",".join(["%s"] * len(chunk_processed))
             cur_w.execute(
                 f"UPDATE staging_import_rows SET processed_at=NOW()"
-                f" WHERE staging_id=%s AND row_idx IN ({placeholders})",
-                [staging_id] + processadas_idx,
+                f" WHERE staging_id=%s AND row_idx IN ({ph})",
+                [staging_id] + chunk_processed,
             )
             conn_w.commit()
-            cur_w.close()
-            conn_w.close()
-            processadas_idx.clear()
 
-            pct = stats["processadas"] / len(valid_rows) * 100
-            print(
-                f"    {stats['processadas']:>7,}/{len(valid_rows):,} ({pct:.0f}%)"
-                f"  clientes={stats['clientes_novos']}"
-                f"  uc={stats['uc_novas']}"
-                f"  macros={stats['macros_novas']}"
-                f"  tel={stats['telefones']}"
-                f"  end={stats['enderecos']}"
-            )
+        pct = stats["processadas"] / len(valid_rows) * 100
+        print(
+            f"    {stats['processadas']:>7,}/{len(valid_rows):,} ({pct:.0f}%)"
+            f"  clientes={stats['clientes_novos']}"
+            f"  uc={stats['uc_novas']}"
+            f"  macros={stats['macros_novas']}"
+            f"  tel={stats['telefones']}"
+            f"  end={stats['enderecos']}"
+        )
 
-            # Reconecta para o próximo lote
-            conn_w = conectar()
-            cur_w  = conn_w.cursor()
-
-    # Commit final dos restos
+    # Atualiza contagem final no staging_imports
     if not dry_run:
-        if processadas_idx:
-            placeholders = ",".join(["%s"] * len(processadas_idx))
-            cur_w.execute(
-                f"UPDATE staging_import_rows SET processed_at=NOW()"
-                f" WHERE staging_id=%s AND row_idx IN ({placeholders})",
-                [staging_id] + processadas_idx,
-            )
         cur_w.execute(
             "UPDATE staging_imports SET rows_success=%s WHERE id=%s",
             (stats["processadas"], staging_id),
