@@ -32,22 +32,24 @@ echo Venv: OK
 echo .env: OK
 echo.
 
-:: Repassa todos os argumentos para o python (ex: --tamanho 500 --dry-run)
 :: Uso:
-::   EXECUTAR.bat                  -> lote padrao (2000 registros)
-::   EXECUTAR.bat --tamanho 500    -> lote de 500
-::   EXECUTAR.bat --dry-run        -> so busca, nao grava
-echo Iniciando ciclo... (%*)
+::   EXECUTAR.bat                        -> loop continuo, lotes de 200 (modo padrao)
+::   EXECUTAR.bat --tamanho 500          -> loop continuo, lotes de 500
+::   EXECUTAR.bat --tamanho 200 --pausa 60  -> loop com pausa de 60s entre ciclos
+::   EXECUTAR.bat --dry-run              -> so busca, nao grava
+::   EXECUTAR.bat --tamanho 2000 (sem --continuar) -> ciclo unico de 2000
+echo Iniciando modo continuo... (%*)
+echo Ctrl+C para parar com segurança.
 echo.
 
-.venv\Scripts\python.exe -u executar_automatico.py %*
+.venv\Scripts\python.exe -u executar_automatico.py --continuar %*
 
 echo.
 echo =============================================
 if %errorlevel% equ 0 (
-    echo  CICLO CONCLUIDO COM SUCESSO
+    echo  ORQUESTRADOR ENCERRADO
 ) else (
-    echo  CICLO ENCERROU COM ERRO ^(codigo %errorlevel%^)
+    echo  ENCERROU COM ERRO ^(codigo %errorlevel%^)
     echo  Verifique a saida acima para detalhes.
 )
 echo =============================================
