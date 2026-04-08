@@ -422,28 +422,129 @@ Resultados:
 
 ---
 
-## 8. Estado Atual e Próximos Passos
+## 8. Execuções Reais em Produção
+
+### 8.1 Primeiro ciclo real — lote 50 (2026-04-08)
+
+**Comando:**
+```bat
+EXECUTAR.bat --tamanho 50
+```
+
+**Resultado:**
+- ✅ 50/50 registros consultados na API
+- 4 timeouts resolvidos na segunda tentativa (retry automático)
+- **7 consolidados** (titularidade confirmada)
+- **21 excluídos** (contrato não existe / CPF inválido / distribuição inativa)
+- 0 erros de processamento
+- Arquivos arquivados com timestamp `20260408_113504`
+
+**Conclusão:** Pipeline funcionando ponta a ponta confirmado.
+
+---
+
+### 8.2 Ciclo completo — lote 2000 (2026-04-08)
+
+Lançado em background após confirmação do lote 50:
+```powershell
+.venv\Scripts\python.exe -u executar_automatico.py --tamanho 2000 *> ciclo_run.log
+```
+Log crescendo normalmente — ~578+ de 2000 processados quando modo contínuo foi implementado.
+
+---
+
+## 9. Modo Contínuo (Loop Forever)
+
+### 9.1 Motivação
+
+Com ~34.000+ registros pendentes, rodar ciclos manuais é inviável. O modo `--continuar`
+executa ciclos indefinidamente com mecanismos de segurança para falhas de SSH e lotes vazios.
+
+### 9.2 Implementação
+
+**Commit:** `7c220b0` — `macro: modo continuo (--continuar) com reconexao SSH automatica`
+
+**Nova função extraída:** `_executar_um_ciclo(tamanho: int) -> str`
+- Encapsula o ciclo completo (passo 1 → SSH → API → passo 3)
+- Retorna: `'ok'` / `'vazio'` / `'erro_ssh'` / `'erro'`
+
+**Flags de `main()`:**
+
+| Flag | Padrão | Descrição |
+|---|---|---|
+| `--tamanho N` | 200 | Registros por ciclo (antes era 2000) |
+| `--continuar` | off | Ativa o loop infinito |
+| `--pausa N` | 30 | Segundos entre ciclos |
+| `--max-erros N` | 3 | Erros consecutivos antes de reconectar SSH |
+
+### 9.3 Lógica de Segurança do Loop
+
+```
+resultado = _executar_um_ciclo(tamanho)
+
+'ok'       → erros_seguidos = 0  |  aguarda --pausa segundos
+'vazio'    → aguarda 5 min (300s), verifica novamente
+'erro_ssh' → kill SSH  |  backoff = min(120, 30 × erros_seguidos)
+'erro'     → erros_seguidos++  |  aguarda --pausa segundos
+
+erros_seguidos >= max_erros:
+  → kill SSH + aguarda 60s + reconecta VPN
+  → reinicia contagem de erros
+
+Ctrl+C → graceful: kill SSH + processa resultado parcial se CSV existir
+```
+
+### 9.4 Como Usar
+
+**Modo padrão — produção (recomendado):**
+```bat
+EXECUTAR.bat
+```
+Equivale a `executar_automatico.py --continuar --tamanho 200 --pausa 30 --max-erros 3`.
+
+**Com pausa maior entre ciclos:**
+```bat
+EXECUTAR.bat --tamanho 100 --pausa 60
+```
+
+**Ciclo único sem loop (para testes):**
+```bat
+EXECUTAR.bat --tamanho 50
+```
+
+### 9.5 Estimativa de Tempo para Zerar Pendentes
+
+Com ~34.000 pendentes, lotes de 200, pausa de 30s e ~2-3 min/ciclo de API:
+
+- Ciclos necessários: ~170
+- Tempo estimado: **5–9 horas contínuas**
+
+---
+
+## 10. Estado Final e Próximas Ações
 
 ### Estado em 2026-04-08
 
 | Item | Status |
 |---|---|
 | Infraestrutura da macro | ✅ Pronta |
-| Credenciais e segurança | ✅ Organizadas |
-| Testes de viabilidade | ✅ Todos aprovados |
-| Execução real (ponta a ponta) | ⏳ Pendente — primeiro ciclo real |
-| Pipeline operacional fornecedor2 | 🔄 Em andamento (staging → produção) |
+| Credenciais e segurança | ✅ Organizadas (.env, .gitignore) |
+| Testes de viabilidade | ✅ 9/9 aprovados |
+| Primeiro ciclo real (lote 50) | ✅ 7 consolidados, 21 excluídos |
+| Ciclo completo (lote 2000) | ✅ Rodando em background |
+| Modo contínuo (loop forever) | ✅ Commit `7c220b0` |
+| Documentação profissional | ✅ README, DIARIO_TECNICO, EXECUTAR.bat |
 
-### Próximos passos
+### Próximas ações
 
-1. **Rodar primeiro ciclo real com lote pequeno:**
+1. **Rodar em modo contínuo** até zerar os ~34.000 pendentes:
    ```bat
-   EXECUTAR.bat --tamanho 50
+   EXECUTAR.bat
    ```
-   Verificar que `resultado_lote.csv` é gerado e `tabela_macros` atualiza de `pendente` → `consolidado`.
 
-2. **Aumentar gradualmente o lote:** 100 → 500 → 1000 → 2000.
+2. **Integrar com pipeline operacional:** após carga diária do staging
+   (`pipeline_carga_operacional_fornecedor2.py`), executar `EXECUTAR.bat`
+   para processar os novos pendentes inseridos automaticamente.
 
-3. **Integrar com o pipeline operacional:** após a carga diária do staging (`pipeline_carga_operacional_fornecedor2.py`), rodar o `EXECUTAR.bat` para consultar os novos pendentes.
-
-4. **Configurar execução agendada** (Agendador de Tarefas do Windows ou cron no Linux).
+3. **Agendar execução** via Agendador de Tarefas do Windows para rodar
+   diariamente após a carga do ETL.
