@@ -46,6 +46,12 @@ import httpx
 import pandas as pd
 import time
 
+# Garante UTF-8 no pipe para o painel (evita UnicodeEncodeError no Windows)
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+if hasattr(sys.stderr, 'reconfigure'):
+    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+
 
 
 
@@ -202,6 +208,51 @@ class JanelaControle:
                 pass
 
 
+class JanelaControleHeadless:
+    """Substituto sem UI para modo automatico (chamado por executar_automatico.py).
+
+    Tem a mesma interface de JanelaControle mas nao cria nenhuma janela.
+    O status e exibido no stdout (capturado pelo painel).
+    parar_processo e encerrar_aplicacao ficam sempre False — a parada
+    e controlada pelo CTRL_BREAK_EVENT enviado pelo orquestrador.
+    """
+    def __init__(self):
+        self.parar_processo      = False
+        self.encerrar_aplicacao  = False
+        self._inicio             = None
+        self._total              = 0
+        self._ultimo_log         = 0
+
+    def iniciar_em_thread(self):
+        pass
+
+    def iniciar_cronometro(self):
+        self._inicio = time.time()
+        self._total  = 0
+
+    def atualizar_informacoes_tempo_real(self, lote_atual=None, total_processadas=None):
+        if total_processadas is not None:
+            self._total = total_processadas
+        # Loga progresso a cada 10s
+        agora = time.time()
+        if agora - self._ultimo_log >= 10:
+            self._ultimo_log = agora
+            if self._inicio and self._total:
+                decorrido = agora - self._inicio
+                vel = (self._total / decorrido) * 60 if decorrido > 0 else 0
+                print(f"[PROG] Lote {lote_atual} | Processados: {self._total} | {vel:.0f}/min")
+
+    def atualizar_status(self, texto):
+        # Remove emojis simples para nao quebrar o pipe
+        import re
+        limpo = re.sub(r'[^\x00-\x7F\u00C0-\u024F\u2010-\u2027]', '', texto).strip()
+        if limpo:
+            print(f"[STATUS] {limpo}")
+
+    def fechar_janela(self):
+        pass
+
+
 class ConsultaContratoAsync:
     def __init__(self, limite_concorrencia=3, arquivo_entrada=None, arquivo_saida=None):
         # --- Modo automático (pipeline) vs. modo manual (dialog) ---
@@ -233,8 +284,11 @@ class ConsultaContratoAsync:
         self.reconexoes_realizadas = 0    # contador de reconexões (para log)
         self.LIMITE_RECONECTAR = 10       # erros consecutivos que disparam reconexão
 
-        # Janela de controle
-        self.janela_controle = JanelaControle()
+        # Janela de controle: UI real no modo manual, headless no modo automatico
+        if arquivo_entrada is None:
+            self.janela_controle = JanelaControle()
+        else:
+            self.janela_controle = JanelaControleHeadless()
 
     def verificar_tunel_ssh(self):
         """Verifica se o túnel SSH está ativo na porta 5000"""
@@ -740,9 +794,10 @@ class ConsultaContratoAsync:
         Modo automático: lê CSV de lote_pendente.csv (sem dialog).
         Modo manual:     abre dialog e lê Excel (comportamento original).
         """
-        print("🚀 Iniciando janela de controle...")
-        self.janela_controle.iniciar_em_thread()
-        time.sleep(0.5)
+        if isinstance(self.janela_controle, JanelaControle):
+            print("Iniciando janela de controle...")
+            self.janela_controle.iniciar_em_thread()
+            time.sleep(0.5)
 
         try:
             # Verificações básicas
@@ -777,8 +832,9 @@ class ConsultaContratoAsync:
             print(f"❌ Erro geral: {e}")
             
         finally:
-            self.janela_controle.atualizar_status("✅ Finalizado")
-            time.sleep(2)
+            self.janela_controle.atualizar_status("Finalizado")
+            if isinstance(self.janela_controle, JanelaControle):
+                time.sleep(2)
             self.janela_controle.fechar_janela()
     
     async def _processar_rapido(self, df):
@@ -803,7 +859,7 @@ class ConsultaContratoAsync:
                   f"Empresa={linha['empresa']}")
         print()
 
-        timeout_config = httpx.Timeout(connect=4.0, read=4.0, write=3.0, pool=3.0)
+        timeout_config = httpx.Timeout(connect=30.0, read=30.0, write=30.0, pool=30.0)
         self.semaforo = asyncio.Semaphore(self.limite_concorrencia)
 
         # Loop de reconexão: reinicia túnel e retoma quando _pedir_reconexao=True
