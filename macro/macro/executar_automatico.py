@@ -5,16 +5,16 @@ Neo Energia - Orquestrador Automático  (executar_automatico.py)
 Coordenar todos os passos do ciclo de consulta automatizado:
 
   PASSO 1  [EXTRACT] etl/extraction/macro/03_buscar_lote_macro.py
-                    → Busca lote priorizado do banco (fornecedor2 > contatus,
+                    -> Busca lote priorizado do banco (fornecedor2 > contatus,
                       pendente > reprocessar), exporta macro/dados/lote_pendente.csv
 
   PASSO 2  [MACRO]  macro/macro/consulta_contrato.py --arquivo --saida
-                    → SSH + túnil + chamadas à API Neo Energia
-                    → Salva macro/dados/resultado_lote.csv
+                    -> SSH + túnil + chamadas à API Neo Energia
+                    -> Salva macro/dados/resultado_lote.csv
 
   PASSO 3  [ETL]    etl/load/macro/04_processar_retorno_macro.py
-                    → Interpreta respostas, atualiza tabela_macros no banco
-                    → Arquiva os arquivos de lote
+                    -> Interpreta respostas, atualiza tabela_macros no banco
+                    -> Arquiva os arquivos de lote
 
 Transformation utilizada internamente pelo passo 3:
   etl/transformation/macro/interpretar_resposta.py
@@ -34,7 +34,7 @@ import signal
 from pathlib import Path
 from dotenv import load_dotenv
 
-# Força UTF-8 no stdout/stderr — necessário no Windows (cp1252 não suporta emojis)
+# Força UTF-8 no stdout/stderr  -  necessário no Windows (cp1252 não suporta emojis)
 if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 if hasattr(sys.stderr, 'reconfigure'):
@@ -54,7 +54,7 @@ REMOTE_PORT = int(os.getenv("REMOTE_PORT", 80))
 
 # Caminhos
 SCRIPT_DIR   = Path(__file__).parent
-# Caminhos — detecta SO para usar o executável correto do venv
+# Caminhos  -  detecta SO para usar o executável correto do venv
 import platform as _platform
 import shutil as _shutil
 if _platform.system() == "Windows":
@@ -80,14 +80,14 @@ ETL_BUSCAR   = PROJETO_DIR / "etl" / "extraction" / "macro" / "03_buscar_lote_ma
 ETL_RETORNO  = PROJETO_DIR / "etl" / "load" / "macro" / "04_processar_retorno_macro.py"
 
 if not all([SSH_SERVER, SSH_PASSWORD, REMOTE_HOST]):
-    print("❌ Erro: Variáveis de ambiente não encontradas no arquivo .env")
+    print("[ERRO] Erro: Variáveis de ambiente não encontradas no arquivo .env")
     print("Certifique-se de que o arquivo .env existe e contém:")
     print("SSH_SERVER, SSH_PASSWORD, REMOTE_HOST")
     sys.exit(1)
 if not SSH_HOST_KEY:
-    print("\u26a0\ufe0f  Aviso: SSH_HOST_KEY não configurada no .env")
+    print("[AVISO] SSH_HOST_KEY não configurada no .env")
     print("   Plink pode falhar em modo batch. Execute uma vez interativamente para aceitar a chave.")
-    print("   Veja CONFIGURACAO.md para instruções.")
+    print("   Veja CONFIGURACAO.md para instrucoes.")
 IS_WINDOWS = _platform.system() == "Windows"
 
 
@@ -101,10 +101,10 @@ def kill_existing_ssh():
                 r = subprocess.run(["taskkill", "/IM", proc, "/F"],
                                    capture_output=True, text=True)
                 if r.returncode == 0:
-                    print(f"✓ Processo {proc} finalizado")
+                    print(f"OK Processo {proc} finalizado")
                     killed_any = True
             except Exception as e:
-                print(f"⚠️  Erro ao finalizar {proc}: {e}")
+                print(f"[AVISO]  Erro ao finalizar {proc}: {e}")
         # Libera a porta pelo PID (netstat)
         try:
             r = subprocess.run(["netstat", "-ano"], capture_output=True, text=True)
@@ -115,7 +115,7 @@ def kill_existing_ssh():
                         try:
                             subprocess.run(["taskkill", "/PID", parts[-1], "/F"],
                                            capture_output=True, text=True)
-                            print(f"✓ Porta {LOCAL_PORT} liberada (PID {parts[-1]})")
+                            print(f"OK Porta {LOCAL_PORT} liberada (PID {parts[-1]})")
                             killed_any = True
                         except Exception:
                             pass
@@ -127,26 +127,26 @@ def kill_existing_ssh():
             r = subprocess.run(["pkill", "-f", f"ssh.*{LOCAL_PORT}"],
                                capture_output=True, text=True)
             if r.returncode == 0:
-                print(f"✓ Processo ssh túnel (porta {LOCAL_PORT}) finalizado")
+                print(f"OK Processo ssh túnel (porta {LOCAL_PORT}) finalizado")
                 killed_any = True
         except Exception as e:
-            print(f"⚠️  Erro ao matar ssh: {e}")
+            print(f"[AVISO]  Erro ao matar ssh: {e}")
         # Fallback: lsof para liberar a porta
         try:
             r = subprocess.run(["lsof", "-t", f"-i:{LOCAL_PORT}"],
                                capture_output=True, text=True)
             for pid in r.stdout.strip().split():
                 subprocess.run(["kill", pid], capture_output=True)
-                print(f"✓ PID {pid} na porta {LOCAL_PORT} finalizado")
+                print(f"OK PID {pid} na porta {LOCAL_PORT} finalizado")
                 killed_any = True
         except Exception:
             pass
 
     if killed_any:
-        print("✓ Conexões anteriores limpas")
+        print("OK Conexões anteriores limpas")
         time.sleep(2)
     else:
-        print("ℹ️  Nenhuma conexão anterior encontrada")
+        print("[INFO]  Nenhuma conexão anterior encontrada")
 
 def check_tunnel_working():
     """Verifica se o túnel está funcionando"""
@@ -156,7 +156,7 @@ def check_tunnel_working():
         port_in_use = f":{LOCAL_PORT}" in result.stdout
         
         if port_in_use:
-            print(f"✓ Porta {LOCAL_PORT} está sendo usada")
+            print(f"OK Porta {LOCAL_PORT} está sendo usada")
             
             # Teste adicional: tenta conectar na porta local
             import socket
@@ -167,20 +167,20 @@ def check_tunnel_working():
                 sock.close()
                 
                 if result == 0:
-                    print(f"✓ Conexão local na porta {LOCAL_PORT} funcionando")
+                    print(f"OK Conexão local na porta {LOCAL_PORT} funcionando")
                     return True
                 else:
-                    print(f"⚠️  Porta {LOCAL_PORT} aberta mas não aceitando conexões")
+                    print(f"[AVISO]  Porta {LOCAL_PORT} aberta mas não aceitando conexões")
                     return False
             except Exception as e:
-                print(f"⚠️  Erro ao testar conexão local: {e}")
+                print(f"[AVISO]  Erro ao testar conexão local: {e}")
                 return port_in_use
         else:
-            print(f"❌ Porta {LOCAL_PORT} não está sendo usada")
+            print(f"[ERRO] Porta {LOCAL_PORT} não está sendo usada")
             return False
             
     except Exception as e:
-        print(f"❌ Erro ao verificar túnel: {e}")
+        print(f"[ERRO] Erro ao verificar túnel: {e}")
         return False
 
 def _ssh_cmd_remoto(comando: str) -> list:
@@ -200,38 +200,38 @@ def _ssh_cmd_remoto(comando: str) -> list:
 
 def verificar_ativar_vpn():
     """Verifica e ativa VPN no servidor SSH (Windows e Linux)."""
-    print("🔍 1. Verificando status da VPN no servidor...")
+    print("[>>>] 1. Verificando status da VPN no servidor...")
 
     try:
         r = subprocess.run(_ssh_cmd_remoto('ipsec status | grep "vpn"'),
                            capture_output=True, text=True, timeout=10)
         if r.returncode == 0 and "vpn" in r.stdout:
-            print("✅ VPN já está ativa")
+            print("[OK] VPN já está ativa")
             return True
     except Exception:
         pass
 
-    print("⚠️ VPN não está ativa, tentando conectar...")
+    print("[AVISO] VPN não está ativa, tentando conectar...")
     try:
         r = subprocess.run(_ssh_cmd_remoto("ipsec up vpn"),
                            capture_output=True, text=True, timeout=15)
         if r.returncode == 0:
-            print("✅ VPN conectada com sucesso")
-            print(f"📋 Saída: {r.stdout.strip()}")
+            print("[OK] VPN conectada com sucesso")
+            print(f"[LOG] Saída: {r.stdout.strip()}")
             time.sleep(4)
             return True
         else:
-            print("⚠️ VPN falhou, continuando sem VPN...")
-            print(f"📋 Erro: {r.stderr}")
+            print("[AVISO] VPN falhou, continuando sem VPN...")
+            print(f"[LOG] Erro: {r.stderr}")
             return True  # Continua mesmo se VPN falhar
     except Exception as e:
-        print(f"⚠️ Erro ao ativar VPN: {e}")
+        print(f"[AVISO] Erro ao ativar VPN: {e}")
         return True  # Continua mesmo se VPN falhar
 
 
 def create_ssh_tunnel():
-    """Cria túnel SSH local → remoto (Windows usa plink, Linux usa sshpass+ssh)."""
-    print(f"🔗 Criando túnel SSH: localhost:{LOCAL_PORT} → {REMOTE_HOST}:{REMOTE_PORT}")
+    """Cria túnel SSH local -> remoto (Windows usa plink, Linux usa sshpass+ssh)."""
+    print(f"[SSH] Criando túnel SSH: localhost:{LOCAL_PORT} -> {REMOTE_HOST}:{REMOTE_PORT}")
 
     if IS_WINDOWS:
         cmd = [
@@ -255,7 +255,7 @@ def create_ssh_tunnel():
         ]
         kwargs = {}
 
-    print(f"🔧 Comando: {' '.join(cmd[:6])} ... (senha ocultada)")
+    print(f"[CFG] Comando: {' '.join(cmd[:6])} ... (senha ocultada)")
 
     try:
         process = subprocess.Popen(
@@ -264,50 +264,50 @@ def create_ssh_tunnel():
             stderr=subprocess.PIPE,
             **kwargs
         )
-        print(f"🔄 Processo SSH iniciado (PID: {process.pid})")
-        print("⏳ Aguardando túnel estabelecer...")
+        print(f"[...] Processo SSH iniciado (PID: {process.pid})")
+        print("[...] Aguardando túnel estabelecer...")
 
         for i in range(10):
             time.sleep(1)
             if process.poll() is not None:
                 stdout, stderr = process.communicate()
-                print(f"❌ Processo plink terminou inesperadamente")
-                print(f"📤 STDOUT: {stdout.decode('utf-8', errors='ignore')}")
-                print(f"📥 STDERR: {stderr.decode('utf-8', errors='ignore')}")
+                print(f"[ERRO] Processo plink terminou inesperadamente")
+                print(f"[OUT] STDOUT: {stdout.decode('utf-8', errors='ignore')}")
+                print(f"[IN] STDERR: {stderr.decode('utf-8', errors='ignore')}")
                 return None
             
             # Verifica se o túnel já está funcionando
             if check_tunnel_working():
-                print("✅ Túnel SSH criado com sucesso!")
+                print("[OK] Túnel SSH criado com sucesso!")
                 return process
                 
-            print(f"⏳ Tentativa {i+1}/10...")
+            print(f"[...] Tentativa {i+1}/10...")
         
         # Se chegou aqui, o túnel não foi estabelecido
-        print("❌ Falha ao criar túnel SSH - timeout")
+        print("[ERRO] Falha ao criar túnel SSH - timeout")
         
         # Captura logs do processo
         try:
             stdout, stderr = process.communicate(timeout=2)
-            print(f"📤 STDOUT: {stdout.decode('utf-8', errors='ignore')}")
-            print(f"📥 STDERR: {stderr.decode('utf-8', errors='ignore')}")
+            print(f"[OUT] STDOUT: {stdout.decode('utf-8', errors='ignore')}")
+            print(f"[IN] STDERR: {stderr.decode('utf-8', errors='ignore')}")
         except subprocess.TimeoutExpired:
-            print("⚠️  Processo não respondeu para captura de logs")
+            print("[AVISO]  Processo não respondeu para captura de logs")
         
         process.terminate()
         return None
             
     except FileNotFoundError:
-        print("❌ PuTTY/plink não encontrado. Tentando método alternativo...")
+        print("[ERRO] PuTTY/plink não encontrado. Tentando método alternativo...")
         return create_ssh_tunnel_sshpass()
     except Exception as e:
-        print(f"❌ Erro ao criar túnel: {e}")
+        print(f"[ERRO] Erro ao criar túnel: {e}")
         return None
 
 def create_ssh_tunnel_sshpass():
     """Método alternativo usando sshpass ou entrada manual"""
-    print("⚠️  Método automático falhou")
-    print("📝 Instruções manuais:")
+    print("[AVISO]  Método automático falhou")
+    print(" Instruções manuais:")
     print(f"1. Abra um novo terminal")
     print(f"2. Execute: ssh -L {LOCAL_PORT}:{REMOTE_HOST}:{REMOTE_PORT} {SSH_USER}@{SSH_SERVER} -N")
     print(f"3. Digite a senha: {SSH_PASSWORD}")
@@ -316,15 +316,15 @@ def create_ssh_tunnel_sshpass():
     input("Pressione ENTER quando o túnel SSH estiver funcionando...")
     
     if check_tunnel_working():
-        print("✅ Túnel confirmado!")
+        print("[OK] Túnel confirmado!")
         return True
     else:
-        print("❌ Túnel não detectado")
+        print("[ERRO] Túnel não detectado")
         return None
 
 def testar_api():
     """Testa a API antes de executar o script principal"""
-    print("\n🔍 3. Testando conectividade da API...")
+    print("\n[>>>] 3. Testando conectividade da API...")
     
     # URL de teste com parâmetros reais do script antigo
     url_teste = f"http://localhost:{LOCAL_PORT}/validacaotitularidade/Validacao/ValidarTitularidade?ContaContrato=7081339311&CpfCnpj=1743511&Empresa=coelba"
@@ -336,22 +336,22 @@ def testar_api():
         ], capture_output=True, text=True, timeout=15)
         
         if result.returncode == 0:
-            print("✅ API respondendo via túnel")
+            print("[OK] API respondendo via túnel")
             resposta = result.stdout.strip()
             if len(resposta) > 100:
-                print(f"📋 Resposta: {resposta[:100]}...")
+                print(f"[LOG] Resposta: {resposta[:100]}...")
             else:
-                print(f"📋 Resposta: {resposta}")
+                print(f"[LOG] Resposta: {resposta}")
             return True
         else:
-            print("⚠️ API não responde rapidamente (normal se estiver lenta)")
+            print("[AVISO] API não responde rapidamente (normal se estiver lenta)")
             return testar_api_python(url_teste)
             
     except FileNotFoundError:
-        print("⚠️ curl não encontrado, testando com Python...")
+        print("[AVISO] curl não encontrado, testando com Python...")
         return testar_api_python(url_teste)
     except Exception as e:
-        print(f"⚠️ Erro no teste da API: {e}")
+        print(f"[AVISO] Erro no teste da API: {e}")
         return testar_api_python(url_teste)
 
 def testar_api_python(url):
@@ -360,15 +360,15 @@ def testar_api_python(url):
         import httpx
         with httpx.Client(timeout=15.0) as client:
             response = client.get(url)
-            print("✅ API respondendo via túnel (teste Python)")
-            print(f"📋 Status: {response.status_code}")
+            print("[OK] API respondendo via túnel (teste Python)")
+            print(f"[LOG] Status: {response.status_code}")
             if len(response.text) > 100:
-                print(f"📋 Resposta: {response.text[:100]}...")
+                print(f"[LOG] Resposta: {response.text[:100]}...")
             else:
-                print(f"📋 Resposta: {response.text}")
+                print(f"[LOG] Resposta: {response.text}")
             return True
     except Exception as e:
-        print(f"❌ API não respondeu: {e}")
+        print(f"[ERRO] API não respondeu: {e}")
         return False
 
 def run_python_script():
@@ -376,40 +376,50 @@ def run_python_script():
     Os caminhos são passados via --arquivo e --saida para bypassar o dialog.
     """
     try:
-        print("🐍 Executando macro (consulta_contrato.py)...")
+        print(" Executando macro (consulta_contrato.py)...")
         cmd = [
             str(PYTHON_EXE),
+            "-u",            # unbuffered — output aparece em tempo real no painel
             str(PYTHON_SCRIPT),
             "--arquivo", str(LOTE_CSV),
             "--saida",   str(RESULTADO_CSV),
         ]
         print(f"   Comando: {' '.join(cmd)}")
 
+        env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
         result = subprocess.run(
             cmd,
             cwd=SCRIPT_DIR,
-            capture_output=False
+            capture_output=False,
+            env=env,
+            # SEM CREATE_NO_WINDOW aqui — herda stdout pipe do pai (painel)
         )
 
         if result.returncode == 0:
-            print("✅ Macro executada com sucesso!")
+            print("[OK] Macro executada com sucesso!")
+        else:
+            print(f"[AVISO] Macro encerrou com codigo {result.returncode} - verificando CSV...")
+
+        # Sucesso = CSV gerado, independente do exit code
+        if RESULTADO_CSV.exists():
+            print(f"[OK] resultado_lote.csv encontrado ({RESULTADO_CSV.stat().st_size} bytes)")
             return True
         else:
-            print(f"❌ Macro falhou com código: {result.returncode}")
+            print("[ERRO] resultado_lote.csv nao gerado - macro falhou sem salvar")
             return False
 
     except Exception as e:
-        print(f"❌ Erro ao executar macro: {e}")
+        print(f"[ERRO] Erro ao executar macro: {e}")
         return False
 
 
 def run_etl_buscar_lote(tamanho: int = 2000, dry_run: bool = False) -> bool:
-    """PASSO 1 — EXTRACT: busca lote priorizado e exporta CSV para a macro.
+    """PASSO 1  -  EXTRACT: busca lote priorizado e exporta CSV para a macro.
     Script: etl/extraction/macro/03_buscar_lote_macro.py
     """
-    print(f"\n\U0001f5d4 [PASSO 1] Buscando lote do banco (tamanho={tamanho})...")
+    print(f"\n[PASSO 1] Buscando lote do banco (tamanho={tamanho})...")
     if not ETL_BUSCAR.exists():
-        print(f"❌ Script ETL não encontrado: {ETL_BUSCAR}")
+        print(f"[ERRO] Script ETL não encontrado: {ETL_BUSCAR}")
         return False
     try:
         cmd = [str(ETL_PYTHON_EXE), str(ETL_BUSCAR), "--tamanho", str(tamanho)]
@@ -423,30 +433,30 @@ def run_etl_buscar_lote(tamanho: int = 2000, dry_run: bool = False) -> bool:
         )
         if result.returncode == 0:
             if LOTE_CSV.exists():
-                print(f"✅ Lote exportado: {LOTE_CSV}")
+                print(f"[OK] Lote exportado: {LOTE_CSV}")
                 return True
             else:
                 # Script concluíu sem erro mas sem CSV = lote vazio
-                print("ℹ️ Lote vazio — nada a processar.")
+                print("[INFO] Lote vazio  -  nada a processar.")
                 return False
         else:
-            print(f"❌ ETL buscar lote falhou (código {result.returncode})")
+            print(f"[ERRO] ETL buscar lote falhou (código {result.returncode})")
             return False
     except Exception as e:
-        print(f"❌ Erro no passo 1: {e}")
+        print(f"[ERRO] Erro no passo 1: {e}")
         return False
 
 
 def run_etl_processar_retorno() -> bool:
-    """PASSO 3 — ETL: lê resultado da macro, interpreta respostas, atualiza banco.
+    """PASSO 3  -  ETL: lê resultado da macro, interpreta respostas, atualiza banco.
     Script: etl/load/macro/04_processar_retorno_macro.py
     """
-    print("\n🗔 [PASSO 3] Processando retorno no banco...")
+    print("\n [PASSO 3] Processando retorno no banco...")
     if not ETL_RETORNO.exists():
-        print(f"❌ Script ETL não encontrado: {ETL_RETORNO}")
+        print(f"[ERRO] Script ETL não encontrado: {ETL_RETORNO}")
         return False
     if not RESULTADO_CSV.exists():
-        print(f"❌ Arquivo de resultado não encontrado: {RESULTADO_CSV}")
+        print(f"[ERRO] Arquivo de resultado não encontrado: {RESULTADO_CSV}")
         print("   A macro pode ter falhado antes de gerar saída.")
         return False
     try:
@@ -457,28 +467,28 @@ def run_etl_processar_retorno() -> bool:
         )
         ok = result.returncode == 0
         if ok:
-            print("✅ Retorno processado com sucesso!")
+            print("[OK] Retorno processado com sucesso!")
         else:
-            print(f"❌ ETL processar retorno falhou (código {result.returncode})")
+            print(f"[ERRO] ETL processar retorno falhou (código {result.returncode})")
         return ok
     except Exception as e:
-        print(f"❌ Erro no passo 3: {e}")
+        print(f"[ERRO] Erro no passo 3: {e}")
         return False
 
 def _executar_um_ciclo(tamanho: int) -> str:
-    """Executa um único ciclo completo: passo 1 → SSH → macro → passo 3.
+    """Executa um único ciclo completo: passo 1 -> SSH -> macro -> passo 3.
 
     Retorna:
-        'ok'       — todos os passos concluídos com sucesso
-        'vazio'    — passo 1 não encontrou pendentes (sem CSV gerado)
-        'erro_ssh' — túnel SSH não foi estabelecido
-        'erro'     — falha em algum passo (mas ciclo não travou)
+        'ok'        -  todos os passos concluídos com sucesso
+        'vazio'     -  passo 1 não encontrou pendentes (sem CSV gerado)
+        'erro_ssh'  -  túnel SSH não foi estabelecido
+        'erro'      -  falha em algum passo (mas ciclo não travou)
     """
     # ------------------------------------------------------------------
-    # PASSO 1 — ETL: buscar lote priorizado do banco
+    # PASSO 1  -  ETL: buscar lote priorizado do banco
     # ------------------------------------------------------------------
     print("\n" + "=" * 50)
-    print("PASSO 1 — Buscar lote do banco")
+    print("PASSO 1  -  Buscar lote do banco")
     print("=" * 50)
     if not run_etl_buscar_lote(tamanho=tamanho):
         return 'vazio'
@@ -486,11 +496,11 @@ def _executar_um_ciclo(tamanho: int) -> str:
     # ------------------------------------------------------------------
     # Limpa conexões anteriores
     # ------------------------------------------------------------------
-    print("\n🧹 Limpando conexões anteriores...")
+    print("\n[CLEAN] Limpando conexões anteriores...")
     kill_existing_ssh()
 
     # ------------------------------------------------------------------
-    # PASSO 2a — VPN + túnel SSH
+    # PASSO 2a  -  VPN + túnel SSH
     # ------------------------------------------------------------------
     verificar_ativar_vpn()
     time.sleep(3)
@@ -503,20 +513,20 @@ def _executar_um_ciclo(tamanho: int) -> str:
         return 'erro_ssh'
 
     if not testar_api():
-        print("⚠️ API não respondeu no teste — tentando mesmo assim...")
+        print("[AVISO] API não respondeu no teste  -  tentando mesmo assim...")
 
     # ------------------------------------------------------------------
-    # PASSO 2b — Macro: consulta de titularidade via API
+    # PASSO 2b  -  Macro: consulta de titularidade via API
     # ------------------------------------------------------------------
     print("\n" + "=" * 50)
-    print("PASSO 2 — Macro: consulta de titularidade")
+    print("PASSO 2  -  Macro: consulta de titularidade")
     print("=" * 50)
     macro_ok = run_python_script()
 
     # ------------------------------------------------------------------
     # Limpa conexões (VPN + SSH)
     # ------------------------------------------------------------------
-    print("\n🧹 Limpando conexões...")
+    print("\n[CLEAN] Limpando conexões...")
     try:
         subprocess.run(_ssh_cmd_remoto("ipsec down vpn"), capture_output=True, timeout=5)
     except Exception:
@@ -524,10 +534,10 @@ def _executar_um_ciclo(tamanho: int) -> str:
     kill_existing_ssh()
 
     # ------------------------------------------------------------------
-    # PASSO 3 — ETL: processar retorno (mesmo se macro teve erro parcial)
+    # PASSO 3  -  ETL: processar retorno (mesmo se macro teve erro parcial)
     # ------------------------------------------------------------------
     print("\n" + "=" * 50)
-    print("PASSO 3 — Processar retorno no banco")
+    print("PASSO 3  -  Processar retorno no banco")
     print("=" * 50)
     retorno_ok = run_etl_processar_retorno()
 
@@ -551,7 +561,7 @@ def main():
     """
     import argparse
     parser = argparse.ArgumentParser(
-        description="Neo Energia — orquestrador automático (ETL + SSH + macro + ETL)"
+        description="Neo Energia  -  orquestrador automático (ETL + SSH + macro + ETL)"
     )
     parser.add_argument("--tamanho", type=int, default=200,
                         help="Tamanho do lote por ciclo (padrão: 200)")
@@ -566,87 +576,87 @@ def main():
     args = parser.parse_args()
 
     print("=" * 60)
-    print("🚀 NEO ENERGIA — EXECUÇÃO AUTOMÁTICA")
+    print("[START] NEO ENERGIA  -  EXECUÇÃO AUTOMÁTICA")
     print(f"   Lote: {args.tamanho} | Modo: {'CONTÍNUO (loop)' if args.continuar else 'único ciclo'}")
-    print("   Prioridade: fornecedor2 → contatus  |  pendente → reprocessar")
+    print("   Prioridade: fornecedor2 -> contatus  |  pendente -> reprocessar")
     print("=" * 60)
 
-    # ── Modo dry-run (único ciclo parcial) ─────────────────────────────
+    #  Modo dry-run (único ciclo parcial) 
     if args.dry_run:
         print("\n" + "=" * 50)
-        print("PASSO 1 — Buscar lote do banco [DRY-RUN]")
+        print("PASSO 1  -  Buscar lote do banco [DRY-RUN]")
         print("=" * 50)
         run_etl_buscar_lote(tamanho=args.tamanho, dry_run=True)
         print("\n[DRY-RUN] Encerrando após passo 1.")
         return 0
 
-    # ── Modo único ciclo ───────────────────────────────────────────────
+    #  Modo único ciclo 
     if not args.continuar:
         try:
             resultado = _executar_um_ciclo(args.tamanho)
             if resultado == 'ok':
-                print("\n🎉 CICLO COMPLETO CONCLUÍDO COM SUCESSO!")
+                print("\n[SUCESSO] CICLO COMPLETO CONCLUÍDO COM SUCESSO!")
                 return 0
             elif resultado == 'vazio':
-                print("\nℹ️ Sem pendentes — nada a processar.")
+                print("\n[INFO] Sem pendentes  -  nada a processar.")
                 return 0
             else:
-                print(f"\n⚠️ Ciclo encerrado com status: {resultado}")
+                print(f"\n[AVISO] Ciclo encerrado com status: {resultado}")
                 return 1
         except KeyboardInterrupt:
-            print("\n⚠️ Interrompido pelo usuário")
+            print("\n[AVISO] Interrompido pelo usuário")
             kill_existing_ssh()
             if RESULTADO_CSV.exists():
                 run_etl_processar_retorno()
             return 1
         except Exception as e:
-            print(f"\n❌ Erro inesperado: {e}")
+            print(f"\n[ERRO] Erro inesperado: {e}")
             kill_existing_ssh()
             return 1
 
-    # ── Modo contínuo (loop forever) ───────────────────────────────────
+    #  Modo contínuo (loop forever) 
     ciclo_num        = 0
     erros_seguidos   = 0
     total_ok         = 0
     total_erros      = 0
     inicio_sessao    = time.time()
 
-    print(f"\n🔄 Modo contínuo iniciado — Ctrl+C para parar com segurança\n")
+    print(f"\n[...] Modo contínuo iniciado  -  Ctrl+C para parar com segurança\n")
 
     try:
         while True:
             ciclo_num += 1
             ts = time.strftime("%Y-%m-%d %H:%M:%S")
-            print("\n" + "█" * 60)
-            print(f"█  CICLO #{ciclo_num:04d}  |  {ts}")
-            print(f"█  Erros seguidos: {erros_seguidos}/{args.max_erros}  |  OK acumulados: {total_ok}")
-            print("█" * 60)
+            print("\n" + "=" * 60)
+            print(f"=  CICLO #{ciclo_num:04d}  |  {ts}")
+            print(f"=  Erros seguidos: {erros_seguidos}/{args.max_erros}  |  OK acumulados: {total_ok}")
+            print("=" * 60)
 
-            # ── Reconexão preventiva após muitos erros ─────────────────
+            #  Reconexão preventiva após muitos erros 
             if erros_seguidos >= args.max_erros:
-                print(f"\n⚠️  {erros_seguidos} erros seguidos — reconectando SSH e aguardando 60s...")
+                print(f"\n[AVISO]  {erros_seguidos} erros seguidos  -  reconectando SSH e aguardando 60s...")
                 kill_existing_ssh()
                 time.sleep(60)
                 verificar_ativar_vpn()
                 time.sleep(5)
 
-            # ── Executa ciclo ──────────────────────────────────────────
+            #  Executa ciclo 
             try:
                 resultado = _executar_um_ciclo(args.tamanho)
             except Exception as e:
-                print(f"\n❌ Exceção no ciclo #{ciclo_num}: {e}")
+                print(f"\n[ERRO] Exceção no ciclo #{ciclo_num}: {e}")
                 resultado = 'erro'
 
-            # ── Avalia resultado ───────────────────────────────────────
+            #  Avalia resultado 
             if resultado == 'ok':
                 erros_seguidos = 0
                 total_ok += 1
-                print(f"\n✅ Ciclo #{ciclo_num} concluído com sucesso.")
+                print(f"\n[OK] Ciclo #{ciclo_num} concluído com sucesso.")
 
             elif resultado == 'vazio':
                 erros_seguidos = 0
                 duracao = (time.time() - inicio_sessao) / 60
-                print(f"\n🏁 Sem mais pendentes após {ciclo_num} ciclos "
+                print(f"\n Sem mais pendentes após {ciclo_num} ciclos "
                       f"({total_ok} OK, {total_erros} erros) em {duracao:.1f} min")
                 print("   Aguardando 5 min antes de verificar novamente...")
                 time.sleep(300)
@@ -656,23 +666,23 @@ def main():
                 erros_seguidos += 1
                 total_erros += 1
                 pausa_ssh = min(120, 30 * erros_seguidos)
-                print(f"\n❌ Ciclo #{ciclo_num}: falha SSH — aguardando {pausa_ssh}s antes de tentar novamente...")
+                print(f"\n[ERRO] Ciclo #{ciclo_num}: falha SSH  -  aguardando {pausa_ssh}s antes de tentar novamente...")
                 kill_existing_ssh()
                 time.sleep(pausa_ssh)
-                continue  # pula pausa normal — já esperou
+                continue  # pula pausa normal  -  já esperou
 
             else:  # 'erro'
                 erros_seguidos += 1
                 total_erros += 1
-                print(f"\n⚠️  Ciclo #{ciclo_num} encerrou com erros ({erros_seguidos} seguidos).")
+                print(f"\n[AVISO]  Ciclo #{ciclo_num} encerrou com erros ({erros_seguidos} seguidos).")
 
-            # ── Pausa entre ciclos ─────────────────────────────────────
-            print(f"\n⏳ Aguardando {args.pausa}s antes do próximo ciclo...")
+            #  Pausa entre ciclos 
+            print(f"\n[...] Aguardando {args.pausa}s antes do próximo ciclo...")
             time.sleep(args.pausa)
 
     except KeyboardInterrupt:
         duracao = (time.time() - inicio_sessao) / 60
-        print(f"\n\n⚠️  Loop interrompido pelo usuário após {ciclo_num} ciclos "
+        print(f"\n\n[AVISO]  Loop interrompido pelo usuário após {ciclo_num} ciclos "
               f"({total_ok} OK, {total_erros} erros) em {duracao:.1f} min")
         kill_existing_ssh()
         if RESULTADO_CSV.exists():
