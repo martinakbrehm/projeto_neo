@@ -1,5 +1,5 @@
 """
-Painel de controle — Neo Energia Orquestrador Macro
+Painel de controle  -  Neo Energia Orquestrador Macro
 Botão liga/desliga para o modo contínuo de consulta de titularidade.
 
 Uso:
@@ -14,16 +14,23 @@ import queue
 import signal
 import os
 import sys
+import shutil
 import time
 import re
 from pathlib import Path
 
-# ──────────────────────────────────────────────────────────────────────────────
+# 
 # Constantes
-# ──────────────────────────────────────────────────────────────────────────────
+# 
 HERE       = Path(__file__).parent
 VENV_PY    = HERE / ".venv" / "Scripts" / "python.exe"
 SCRIPT     = HERE / "executar_automatico.py"
+
+# Caminhos para salvar resultados no banco apos parada
+RESULTADO_CSV = HERE.parent / "dados" / "resultado_lote.csv"
+PROJETO_DIR   = HERE.parents[1]
+ETL_RETORNO   = PROJETO_DIR / "etl" / "load" / "macro" / "04_processar_retorno_macro.py"
+_sys_python   = shutil.which("python") or shutil.which("python3") or sys.executable
 
 COR_BG      = "#1e1e2e"  # fundo geral
 COR_PAINEL  = "#2a2a3e"  # painel interno
@@ -38,17 +45,19 @@ COR_TITULO  = "#74c0fc"
 COR_AVISO   = "#ffd43b"
 COR_ERRO    = "#ff6b6b"
 COR_OK      = "#69db7c"
+COR_PARANDO = "#e67700"  # laranja - aguardando fim do lote
 COR_INPUT_BG= "#2c2c42"
 COR_INPUT_FG= "#e0e0e0"
 
-# ──────────────────────────────────────────────────────────────────────────────
+# 
 # Classe principal
-# ──────────────────────────────────────────────────────────────────────────────
+# 
 class PainelMacro:
     def __init__(self, root: tk.Tk):
         self.root       = root
         self.processo   = None
         self.rodando    = False
+        self.parando    = False  # True enquanto aguarda o lote atual terminar
         self._q         = queue.Queue()
         self._thread    = None
 
@@ -64,10 +73,10 @@ class PainelMacro:
 
         root.protocol("WM_DELETE_WINDOW", self._fechar)
 
-    # ── UI ────────────────────────────────────────────────────────────────────
+    #  UI 
 
     def _construir_ui(self):
-        self.root.title("Neo Energia — Orquestrador Macro")
+        self.root.title("Neo Energia  -  Orquestrador Macro")
         self.root.configure(bg=COR_BG)
         self.root.resizable(True, True)
         self.root.minsize(620, 540)
@@ -78,13 +87,13 @@ class PainelMacro:
         f_label  = tkfont.Font(family="Segoe UI", size=9)
         f_mono   = tkfont.Font(family="Consolas",  size=9)
 
-        # ── Título ────────────────────────────────────────────────────────────
+        #  Título 
         tk.Label(
-            self.root, text="NEO ENERGIA — Orquestrador Macro",
+            self.root, text="NEO ENERGIA  -  Orquestrador Macro",
             bg=COR_BG, fg=COR_TITULO, font=f_titulo, pady=10
         ).pack(fill=tk.X)
 
-        # ── Botão toggle ──────────────────────────────────────────────────────
+        #  Botão toggle 
         frm_btn = tk.Frame(self.root, bg=COR_BG, pady=6)
         frm_btn.pack()
 
@@ -103,14 +112,14 @@ class PainelMacro:
         self.btn.bind("<Enter>", self._btn_hover)
         self.btn.bind("<Leave>", self._btn_leave)
 
-        # ── Status ────────────────────────────────────────────────────────────
+        #  Status 
         self.var_status = tk.StringVar(value="Aguardando...")
         tk.Label(
             self.root, textvariable=self.var_status,
             bg=COR_BG, fg=COR_TEXTO, font=f_status, pady=2
         ).pack()
 
-        # ── Configurações ─────────────────────────────────────────────────────
+        #  Configurações 
         frm_cfg = tk.Frame(self.root, bg=COR_PAINEL, padx=16, pady=10)
         frm_cfg.pack(fill=tk.X, padx=20, pady=(8, 4))
 
@@ -118,7 +127,7 @@ class PainelMacro:
         self._label_entry(frm_cfg, "Pausa (segundos):", "30",   1, "var_pausa")
         self._label_entry(frm_cfg, "Max erros seguidos:", "3",  2, "var_erros")
 
-        # ── Contadores ────────────────────────────────────────────────────────
+        #  Contadores 
         frm_stats = tk.Frame(self.root, bg=COR_BG)
         frm_stats.pack(fill=tk.X, padx=20, pady=4)
 
@@ -139,7 +148,7 @@ class PainelMacro:
                 padx=14
             ).pack(side=tk.LEFT)
 
-        # ── Log ───────────────────────────────────────────────────────────────
+        #  Log 
         frm_log = tk.Frame(self.root, bg=COR_BG)
         frm_log.pack(fill=tk.BOTH, expand=True, padx=20, pady=(4, 14))
 
@@ -182,9 +191,11 @@ class PainelMacro:
             relief="flat", font=f
         ).grid(row=0, column=col * 2 + 1, padx=(0, 8))
 
-    # ── Toggle ON / OFF ───────────────────────────────────────────────────────
+    #  Toggle ON / OFF 
 
     def _toggle(self):
+        if self.parando:
+            return  # ja enviou sinal, aguardando lote terminar
         if self.rodando:
             self._parar()
         else:
@@ -233,7 +244,7 @@ class PainelMacro:
                 encoding="utf-8",
                 errors="replace",
                 env={**os.environ, "PYTHONIOENCODING": "utf-8"},
-                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW,
             )
         except Exception as e:
             self._log_append(f"Erro ao iniciar processo: {e}\n", "erro")
@@ -248,18 +259,70 @@ class PainelMacro:
         )
         self._thread.start()
 
-    def _parar(self):
-        """Envia Ctrl+C para o processo → ele finaliza ciclo atual e sai."""
-        if self.processo and self.processo.poll() is None:
-            self._log_append(">>> Enviando sinal de parada (aguarda ciclo atual)...\n", "aviso")
+    def _matar_processo_tree(self):
+        """Mata o processo e todos os filhos (taskkill /T /F no Windows)."""
+        if not self.processo:
+            return
+        pid = self.processo.pid
+        try:
+            import subprocess as _sp
+            _sp.run(
+                ["taskkill", "/T", "/F", "/PID", str(pid)],
+                capture_output=True
+            )
+        except Exception:
             try:
-                os.kill(self.processo.pid, signal.CTRL_C_EVENT)
-            except Exception as e:
-                self._log_append(f"Erro ao enviar sinal: {e}\n", "erro")
                 self.processo.terminate()
+            except Exception:
+                pass
+
+    def _salvar_no_banco(self, motivo="parada"):
+        """Roda 04_processar_retorno_macro.py se resultado_lote.csv existir.
+        Executa em thread separada para nao travar a UI.
+        """
+        if not RESULTADO_CSV.exists() or RESULTADO_CSV.stat().st_size < 10:
+            self._log_append(f"[BANCO] Nenhum resultado para salvar ({motivo}).\n", "aviso")
+            return
+        if not ETL_RETORNO.exists():
+            self._log_append(f"[BANCO] Script ETL nao encontrado: {ETL_RETORNO}\n", "erro")
+            return
+
+        self._log_append(f"[BANCO] Salvando resultados no banco ({motivo})...\n", "aviso")
+        self.var_status.set("Salvando no banco...")
+
+        def _run():
+            try:
+                r = subprocess.run(
+                    [_sys_python, "-u", str(ETL_RETORNO)],
+                    cwd=str(PROJETO_DIR),
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=120,
+                )
+                self._q.put(f"[BANCO] Saida ETL:\n{r.stdout[-800:]}\n" if r.stdout else "")
+                if r.returncode == 0:
+                    self._q.put("[BANCO] Resultados salvos no banco com sucesso.\n")
+                else:
+                    self._q.put(f"[BANCO][ERRO] ETL encerrou com codigo {r.returncode}\n{r.stderr[-400:]}\n")
+            except subprocess.TimeoutExpired:
+                self._q.put("[BANCO][ERRO] Timeout ao salvar no banco (120s).\n")
+            except Exception as e:
+                self._q.put(f"[BANCO][ERRO] {e}\n")
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _parar(self):
+        """Para todo o ciclo atual matando a arvore de processos e salva no banco."""
+        if self.processo and self.processo.poll() is None:
+            self._log_append(">>> Parando  -  encerrando processos...\n", "aviso")
+            self._matar_processo_tree()
+        self.parando = True
         self.rodando = False
         self._atualizar_btn()
-        self.var_status.set("Parando — aguardando fim do ciclo atual...")
+        # Salva no banco o que foi processado ate agora
+        self._salvar_no_banco(motivo="parada pelo usuario")
 
     def _ler_stdout(self):
         """Lê stdout do subprocess linha a linha e coloca na fila."""
@@ -272,18 +335,21 @@ class PainelMacro:
             self.processo.wait()
             self._q.put(None)  # sinal de fim
 
-    # ── Polling da fila (roda na thread principal via after) ──────────────────
+    #  Polling da fila (roda na thread principal via after) 
 
     def _poll_queue(self):
         try:
             while True:
                 item = self._q.get_nowait()
                 if item is None:
-                    # processo terminou
+                    # processo terminou de verdade
                     self.rodando = False
+                    self.parando = False
                     self._atualizar_btn()
                     self.var_status.set("Encerrado.")
-                    self._log_append(">>> Processo encerrado.\n", "aviso")
+                    self._log_append(">>> Lote concluido. Processo encerrado.\n", "aviso")
+                    # Salva no banco automaticamente ao final de cada ciclo
+                    self._salvar_no_banco(motivo="fim de ciclo")
                 else:
                     self._processar_linha(item)
         except queue.Empty:
@@ -294,13 +360,13 @@ class PainelMacro:
         """Classifica a linha, atualiza contadores e adiciona ao log."""
         l = linha.rstrip("\n")
 
-        # detecta padrões para contadores
+        # ciclo do loop principal
         if re.search(r"CICLO #\d+", l):
             self.ciclos += 1
             self._atualizar_contadores()
             self._log_append(linha, "titulo")
             return
-        if re.search(r"Ciclo #\d+ conclu", l) or re.search(r"CICLO COMPLETO CONCLU", l):
+        if re.search(r"Ciclo #\d+ conclu|CICLO COMPLETO CONCLU", l):
             self.ok += 1
             self._atualizar_contadores()
             self._log_append(linha, "ok")
@@ -310,13 +376,29 @@ class PainelMacro:
             self._atualizar_contadores()
             self._log_append(linha, "erro")
             return
+
+        # progresso da macro (consulta_contrato.py)
+        if re.search(r"\[Linha \d+\] Enviando|Enviando:.*CPF=", l):
+            self._log_append(linha, "normal")
+            return
+        if re.search(r"\[PROG\]|\[STATUS\]|Lote \d+ \|.*Total:", l):
+            self._log_append(linha, "aviso")
+            return
+        if re.search(r"Salvando \d+ result|resultado.*salvo|arquivo.*criado|anexado", l, re.I):
+            self._log_append(linha, "ok")
+            return
+        if re.search(r"Resposta:|Status HTTP:|API respond|Tunel SSH", l, re.I):
+            self._log_append(linha, "aviso")
+            return
+
+        # padroes gerais
         if re.search(r"pendente|aguardando|pausa|reconnect|VPN|SSH|tunel|tunnel", l, re.I):
             self._log_append(linha, "aviso")
             return
-        if re.search(r"success|sucesso|consolidado|ok|certo", l, re.I):
+        if re.search(r"\[OK\]|success|sucesso|consolidado|certo", l, re.I):
             self._log_append(linha, "ok")
             return
-        if re.search(r"erro|error|fail|falha|excep", l, re.I):
+        if re.search(r"\[ERRO\]|error|fail|falha|excep", l, re.I):
             self._log_append(linha, "erro")
             return
         self._log_append(linha, "normal")
@@ -333,7 +415,7 @@ class PainelMacro:
         self.log.see(tk.END)
         self.log.configure(state=tk.DISABLED)
 
-    # ── Helpers UI ────────────────────────────────────────────────────────────
+    #  Helpers UI 
 
     def _atualizar_btn(self):
         if self.rodando:
@@ -341,13 +423,23 @@ class PainelMacro:
                 text="LIGADO",
                 bg=COR_VERDE,
                 activebackground=COR_HOVER_V,
+                state=tk.NORMAL,
             )
-            self.var_status.set("Rodando em modo contínuo...")
+            self.var_status.set("Rodando em modo continuo...")
+        elif self.parando:
+            self.btn.configure(
+                text="PARANDO...",
+                bg=COR_PARANDO,
+                activebackground=COR_PARANDO,
+                state=tk.DISABLED,
+            )
+            self.var_status.set("Aguardando o lote atual terminar...")
         else:
             self.btn.configure(
                 text="DESLIGADO",
                 bg=COR_CINZA,
                 activebackground=COR_HOVER_C,
+                state=tk.NORMAL,
             )
             if self.inicio:
                 self.var_status.set("Parado.")
@@ -368,6 +460,8 @@ class PainelMacro:
         self.root.after(1000, self._atualizar_timer)
 
     def _btn_hover(self, _):
+        if self.parando:
+            return
         if self.rodando:
             self.btn.configure(bg=COR_HOVER_V)
         else:
@@ -377,16 +471,21 @@ class PainelMacro:
         self._atualizar_btn()
 
     def _fechar(self):
-        if self.rodando:
-            self._parar()
-            self.root.after(1500, self.root.destroy)
-        else:
-            self.root.destroy()
+        if self.rodando or self.parando:
+            self._matar_processo_tree()
+        # espera max 5s pelo pipe fechar, depois destrói
+        deadline = time.time() + 5
+        def _aguardar_e_fechar():
+            if self.processo and self.processo.poll() is None and time.time() < deadline:
+                self.root.after(300, _aguardar_e_fechar)
+            else:
+                self.root.destroy()
+        self.root.after(300, _aguardar_e_fechar)
 
 
-# ──────────────────────────────────────────────────────────────────────────────
+# 
 # Entry point
-# ──────────────────────────────────────────────────────────────────────────────
+# 
 if __name__ == "__main__":
     root = tk.Tk()
     app  = PainelMacro(root)
