@@ -3,9 +3,14 @@
 
   "consolidados_sem_data_extracao": {
     "ignorar": true,
-    "justificativa": "Registros historicos importados via migracao (fornecedor1, fornecedor2 periodo_ate_20260312 e periodo_pos_20260312) nao passaram pelo ETL automatico e portanto nao possuem data_extracao. Comportamento esperado e nao representa falha no salvamento.",
+    "baseline_historico": 89784,
+    "excluidos_historico_sem_data_extracao": 298,
+    "total_historico_finalizado": 90082,
+    "data_migracao": "2026-02-25",
+    "etl_automatico_inicio": "2026-04-06",
+    "justificativa": "Exatamente 89.784 consolidados e 298 excluidos (total 90.082) foram importados via migracao em 2026-02-25 e nao possuem data_extracao. Isso e esperado: esses registros nao passaram pelo ETL automatico. O ETL automatico iniciou em 2026-04-06 e todos os registros processados a partir dessa data TEM data_extracao. Qualquer numero acima de 89.784 consolidados sem data_extracao indica um problema novo no pipeline.",
     "registrado_em": "2026-04-08",
-    "registrado_por": "auditoria inicial"
+    "registrado_por": "investigacao auditoria"
   },
 
   "taxa_reprocessar_alta": {
