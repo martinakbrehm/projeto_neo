@@ -34,6 +34,12 @@ import signal
 from pathlib import Path
 from dotenv import load_dotenv
 
+# Força UTF-8 no stdout/stderr — necessário no Windows (cp1252 não suporta emojis)
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+if hasattr(sys.stderr, 'reconfigure'):
+    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+
 # Carrega variáveis do arquivo .env
 load_dotenv()
 
