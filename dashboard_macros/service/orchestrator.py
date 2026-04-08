@@ -11,12 +11,14 @@ STATUS_INATIVO = {"excluir", "reprocessar"}
 
 
 def build_dashboard_data(resumo_sel, filtro_empresa,
-                         tipo_macro: str = "macro"):
+                         tipo_macro: str = "macro",
+                         filtro_fornecedor: str = None):
     """Carrega dados do banco, aplica filtros e retorna (data_resumo, data_mensagens).
 
-    - resumo_sel    : list de strings de data (YYYY-MM-DD) ou vazio
-    - filtro_empresa: list ou valor único ou vazio
-    - tipo_macro    : 'macro' (tabela_macros) ou 'api' (tabela_macro_api)
+    - resumo_sel       : list de strings de data (YYYY-MM-DD) ou vazio
+    - filtro_empresa   : list ou valor único ou vazio
+    - tipo_macro       : 'macro' (tabela_macros) ou 'api' (tabela_macro_api)
+    - filtro_fornecedor: 'fornecedor2' | 'contatus' | None (todos)
     """
     df = loader.carregar_dados(tipo_macro)
 
@@ -24,6 +26,10 @@ def build_dashboard_data(resumo_sel, filtro_empresa,
         return [], []
 
     dff = df.copy()
+
+    # --- filtro de fornecedor ---
+    if filtro_fornecedor and "fornecedor" in dff.columns:
+        dff = dff[dff["fornecedor"] == filtro_fornecedor]
 
     # --- filtro de dias ---
     if resumo_sel:
@@ -60,6 +66,20 @@ def build_dashboard_data(resumo_sel, filtro_empresa,
         )
         cnt.columns = ["mensagem", "quantidade"]
         data_mensagens = cnt.to_dict("records")
+
+    # ---------------------------------------------------------------
+    # Distribuicao por arquivo_origem
+    # ---------------------------------------------------------------
+    data_origens = []
+    if "arquivo_origem" in dff.columns:
+        orig = (
+            dff.groupby("arquivo_origem", dropna=False)
+            .size()
+            .reset_index(name="quantidade")
+            .sort_values("quantidade", ascending=False)
+        )
+        orig["arquivo_origem"] = orig["arquivo_origem"].fillna("(desconhecido)")
+        data_origens = orig.to_dict("records")
 
     # ---------------------------------------------------------------
     # Masks de status
@@ -107,4 +127,4 @@ def build_dashboard_data(resumo_sel, filtro_empresa,
 
         data_resumo = resumo.to_dict("records")
 
-    return data_resumo, data_mensagens
+    return data_resumo, data_mensagens, data_origens
