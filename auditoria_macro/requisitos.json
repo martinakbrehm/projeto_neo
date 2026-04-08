@@ -9,10 +9,10 @@
   },
 
   "taxa_reprocessar_alta": {
-    "ignorar": false,
-    "justificativa": "Taxa elevada de reprocessar nos primeiros dias e esperada pois a base historica contem registros com UCs desligadas ou contratos inexistentes. Monitorar tendencia de queda nos proximos dias.",
+    "ignorar": true,
+    "justificativa": "Investigado em 08/04/2026: a taxa de 85% e enganosa. A grande maioria dos registros 'reprocessar' (7.808 de 7.998 em 08/04, e 3.087 de 3.091 em 07/04) sao ORFAOS de ciclos de teste interrompidos — nao possuem data_extracao e tem resposta padrao (Aguardando processamento / ERRO). O mecanismo SQL_LIMPAR_ORFAOS os recuperou corretamente. A taxa real de reprocessar por decisao da API e de ~9.5% (194 registros em 2.029 finalizados), o que e aceitavel. Monitorar a metrica 'reprocessar com data_extracao' separadamente.",
     "registrado_em": "2026-04-08",
-    "registrado_por": "auditoria inicial"
+    "registrado_por": "investigacao auditoria"
   },
 
   "taxa_exclusao_alta": {
