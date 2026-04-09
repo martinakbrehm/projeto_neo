@@ -4,9 +4,13 @@
 Passo 2 do pipeline operacional.
 
 Lê staging_imports com status='completed' que ainda tenham linhas não processadas
-e insere nas tabelas de produção (com data_criacao = hoje):
+e insere nas tabelas de produção (com data_criacao = hoje), MAS apenas para
+combinações CPF+UC que ainda não existem no banco:
 
   clientes → cliente_uc → tabela_macros → telefones → enderecos
+
+Se um cliente já tem uma UC específica cadastrada, o registro é ignorado.
+Isso evita duplicação de dados quando o mesmo cliente/UC é enviado múltiplas vezes.
 
 Idempotente: pode ser re-executado sem duplicar registros.
 
@@ -301,13 +305,48 @@ def processar_staging(conn, staging_id: int, dry_run: bool) -> dict:
         if not parsed:
             continue
 
+        # ── FASE 1: clientes — verificar combinação CPF+UC antes de inserir ────
+        # Deduplicar por CPF+UC dentro do chunk (caso o arquivo tenha duplicatas)
+        seen_cpf_uc = set()
+        parsed_deduplicado = []
+        for d in parsed:
+            key = (d["cpf"], d["uc"])
+            if key not in seen_cpf_uc:
+                seen_cpf_uc.add(key)
+                parsed_deduplicado.append(d)
+
+        # Filtrar apenas registros que NÃO têm combinação CPF+UC já existente
+        cpfs_ucs_existentes = set()
+        if not dry_run:
+            # Buscar combinações CPF+UC que já existem
+            cpf_uc_pairs = [(d["cpf"], d["uc"]) for d in parsed_deduplicado]
+            if cpf_uc_pairs:
+                ph = ",".join(["(%s, %s)"] * len(cpf_uc_pairs))
+                params = [item for pair in cpf_uc_pairs for item in pair]
+                cur_w.execute(
+                    f"SELECT c.cpf, cu.uc FROM clientes c "
+                    f"JOIN cliente_uc cu ON cu.cliente_id = c.id "
+                    f"WHERE (c.cpf, cu.uc) IN ({ph})",
+                    params,
+                )
+                cpfs_ucs_existentes = {(r[0], r[1]) for r in cur_w.fetchall()}
+
+        # Filtrar parsed para incluir apenas combinações CPF+UC que não existem
+        parsed_filtrado = [
+            d for d in parsed_deduplicado
+            if (d["cpf"], d["uc"]) not in cpfs_ucs_existentes
+        ]
+
+        if not parsed_filtrado:
+            continue  # Nenhum registro novo para processar neste chunk
+
         # ── FASE 1: clientes — executemany INSERT IGNORE + bulk SELECT ────
-        cpfs_chunk = {d["cpf"] for d in parsed}
+        cpfs_chunk = {d["cpf"] for d in parsed_filtrado}
         novos_cpfs = cpfs_chunk - cpf_map.keys()
 
         if not dry_run:
             if novos_cpfs:
-                nome_por_cpf = {d["cpf"]: d["nome"] for d in parsed}
+                nome_por_cpf = {d["cpf"]: d["nome"] for d in parsed_filtrado}
                 cur_w.executemany(
                     "INSERT IGNORE INTO clientes (cpf, nome, data_criacao)"
                     " VALUES (%s, %s, %s)",
@@ -335,14 +374,14 @@ def processar_staging(conn, staging_id: int, dry_run: bool) -> dict:
                     rows_orig,
                 )
         else:
-            for i, d in enumerate(parsed):
+            for i, d in enumerate(parsed_filtrado):
                 if d["cpf"] not in cpf_map:
                     cpf_map[d["cpf"]] = -(chunk_start + i + 1)
                     stats["clientes_novos"] += 1
 
         # ── FASE 2: cliente_uc — executemany INSERT IGNORE + bulk SELECT ──
         chaves_uc_chunk = set()
-        for d in parsed:
+        for d in parsed_filtrado:
             cid = cpf_map.get(d["cpf"])
             if cid:
                 chaves_uc_chunk.add((cid if cid > 0 else 0, d["uc"], distrib_id))
@@ -378,7 +417,7 @@ def processar_staging(conn, staging_id: int, dry_run: bool) -> dict:
 
         # ── FASE 3: tabela_macros — executemany INSERT ────────────────────
         rows_macros = []
-        for d in parsed:
+        for d in parsed_filtrado:
             cid = cpf_map.get(d["cpf"])
             if not cid:
                 continue
@@ -398,7 +437,7 @@ def processar_staging(conn, staging_id: int, dry_run: bool) -> dict:
 
         # ── FASE 4: telefones — executemany INSERT ────────────────────────
         rows_tels = []
-        for d in parsed:
+        for d in parsed_filtrado:
             cid = cpf_map.get(d["cpf"])
             if not cid:
                 continue
@@ -419,7 +458,7 @@ def processar_staging(conn, staging_id: int, dry_run: bool) -> dict:
 
         # ── FASE 5: enderecos — executemany INSERT ────────────────────────
         rows_ends = []
-        for d in parsed:
+        for d in parsed_filtrado:
             cid = cpf_map.get(d["cpf"])
             if not cid or not d["logradouro"]:
                 continue
@@ -450,7 +489,7 @@ def processar_staging(conn, staging_id: int, dry_run: bool) -> dict:
             )
 
         # ── FASE 6: checkpoint + commit ───────────────────────────────────
-        chunk_processed = [d["idx"] for d in parsed]
+        chunk_processed = [d["idx"] for d in parsed_filtrado]
         stats["processadas"] += len(chunk_processed)
 
         if not dry_run:
