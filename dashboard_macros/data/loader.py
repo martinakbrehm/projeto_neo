@@ -13,30 +13,29 @@ _CACHE: dict = {}  # cache por tipo {'macro': df, 'api': df}
 
 
 # CTE que pega o filename do staging mais recente por CPF
-_CTE_ARQUIVO = """
-    WITH latest_arquivo AS (
-        SELECT
-            sir.normalized_cpf,
-            si.filename,
-            ROW_NUMBER() OVER (
-                PARTITION BY sir.normalized_cpf
-                ORDER BY sir.id DESC
-            ) AS rn
-        FROM staging_import_rows sir
-        JOIN staging_imports si ON si.id = sir.staging_id
-        WHERE sir.validation_status = 'valid'
-    )
-"""
+_CTE_ARQUIVO = """"""
 
 # Expressão de arquivo_origem usada nos SELECTs
 _COL_ARQUIVO = """
-            COALESCE(la.filename, 'Dados hist\u00f3ricos') AS arquivo_origem
+            CASE
+                WHEN DATE(m.data_criacao) < '2026-03-01' THEN 'Dados históricos'
+                ELSE COALESCE(
+                    (SELECT si.filename
+                     FROM staging_import_rows sir
+                     JOIN staging_imports si ON si.id = sir.staging_id
+                     WHERE sir.normalized_cpf = cl.cpf
+                       AND sir.validation_status = 'valid'
+                       AND si.created_at < m.data_extracao
+                     ORDER BY sir.id DESC
+                     LIMIT 1),
+                    'operacional_fallback'
+                )
+            END AS arquivo_origem
 """
 
 # Joins adicionais para resolver o filename
 _JOIN_ARQUIVO = """
         LEFT JOIN clientes          cl ON cl.id  = m.cliente_id
-        LEFT JOIN latest_arquivo    la ON la.normalized_cpf = cl.cpf AND la.rn = 1
 """
 
 SQLs = {
