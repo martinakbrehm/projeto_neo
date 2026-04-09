@@ -63,29 +63,33 @@ WHERE id = %s
   AND status = 'processando'
 """
 
-# Devolve para 'reprocessar' registros que ficaram presos em 'processando'
-# (macro abortou antes de processar todos os registros do lote)
+# Devolve para 'pendente' registros que ficaram presos em 'processando'
+# (macro abortou antes de processar — sem resposta recebida, volta para a fila)
 SQL_RECUPERAR_PROCESSANDO = """
 UPDATE tabela_macros
-SET status      = 'reprocessar',
+SET status      = 'pendente',
+    resposta_id = NULL,
     data_update = NOW()
 WHERE id IN ({placeholders})
   AND status = 'processando'
 """
 
 # Limpeza global: registros 'processando' que não estão no lote atual
-# (órfãos de ciclos anteriores interrompidos — dry-run, crash, etc.)
+# (órfãos de ciclos anteriores interrompidos — sem resposta recebida, volta para a fila)
 SQL_LIMPAR_ORFAOS = """
 UPDATE tabela_macros
-SET status      = 'reprocessar',
+SET status      = 'pendente',
+    resposta_id = NULL,
     data_update = NOW()
 WHERE status = 'processando'
   AND id NOT IN ({placeholders})
 """
 
+# Sem resposta recebida → volta para a fila como pendente
 SQL_LIMPAR_TODOS_ORFAOS = """
 UPDATE tabela_macros
-SET status      = 'reprocessar',
+SET status      = 'pendente',
+    resposta_id = NULL,
     data_update = NOW()
 WHERE status = 'processando'
 """

@@ -131,9 +131,10 @@ def processar_arquivo(conn, filepath: Path, dry_run: bool) -> dict:
     df_cols = list(df.columns)
 
     # Checa se este arquivo já foi importado
+    filename_curto = f"{filepath.parent.name}/{filepath.name}"
     cur.execute(
         "SELECT id, status FROM staging_imports WHERE filename=%s LIMIT 1",
-        (str(filepath),),
+        (filename_curto,),
     )
     existente = cur.fetchone()
     if existente:
@@ -154,7 +155,7 @@ def processar_arquivo(conn, filepath: Path, dry_run: bool) -> dict:
                 total_rows, status, imported_by, started_at)
                VALUES (%s, %s, %s, %s, 'processing', 'pipeline_operacional', NOW())""",
             (
-                str(filepath),
+                filename_curto,
                 str(distrib_id) if distrib_id else None,
                 "tabela_macros",
                 n_total,

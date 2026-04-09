@@ -12,13 +12,40 @@ DB_CONFIG = db_destino()
 _CACHE: dict = {}  # cache por tipo {'macro': df, 'api': df}
 
 
+# CTE que pega o filename do staging mais recente por CPF
+_CTE_ARQUIVO = """
+    WITH latest_arquivo AS (
+        SELECT
+            sir.normalized_cpf,
+            si.filename,
+            ROW_NUMBER() OVER (
+                PARTITION BY sir.normalized_cpf
+                ORDER BY sir.id DESC
+            ) AS rn
+        FROM staging_import_rows sir
+        JOIN staging_imports si ON si.id = sir.staging_id
+        WHERE sir.validation_status = 'valid'
+    )
+"""
+
+# Expressão de arquivo_origem usada nos SELECTs
+_COL_ARQUIVO = """
+            COALESCE(la.filename, 'Dados hist\u00f3ricos') AS arquivo_origem
+"""
+
+# Joins adicionais para resolver o filename
+_JOIN_ARQUIVO = """
+        LEFT JOIN clientes          cl ON cl.id  = m.cliente_id
+        LEFT JOIN latest_arquivo    la ON la.normalized_cpf = cl.cpf AND la.rn = 1
+"""
+
 SQLs = {
     # Dashboard analítico: todos os registros de tabela_macros com labels de respostas,
-    # distribuidoras e origem do cliente (fornecedor2 vs contatus, campanha/arquivo).
-    "macro": """
+    # distribuidoras e origem do cliente (fornecedor2 vs contatus, arquivo de staging).
+    "macro": _CTE_ARQUIVO + """
         SELECT
             m.id,
-            DATE(m.data_update)                          AS dia,
+            DATE(COALESCE(m.data_extracao, m.data_update)) AS dia,
             m.data_update,
             m.data_extracao,
             m.status,
@@ -27,19 +54,21 @@ SQLs = {
             r.status                                     AS resposta_status,
             d.nome                                       AS empresa,
             COALESCE(co.fornecedor, 'fornecedor2')       AS fornecedor,
-            COALESCE(co.campanha,   'operacional')        AS campanha
+""" + _COL_ARQUIVO + """
         FROM tabela_macros m
         LEFT JOIN respostas      r  ON r.id  = m.resposta_id
         LEFT JOIN distribuidoras d  ON d.id  = m.distribuidora_id
         LEFT JOIN cliente_origem co ON co.cliente_id = m.cliente_id
+""" + _JOIN_ARQUIVO + """
         WHERE m.status != 'pendente'
+          AND m.resposta_id IS NOT NULL
     """,
 
     # Pipeline ativo apenas (deduplicado por CPF+UC via view)
-    "macro_pipeline": """
+    "macro_pipeline": _CTE_ARQUIVO + """
         SELECT
             m.id,
-            DATE(m.data_update)                          AS dia,
+            DATE(COALESCE(m.data_extracao, m.data_update)) AS dia,
             m.data_update,
             m.data_extracao,
             m.status,
@@ -48,13 +77,16 @@ SQLs = {
             r.status                                     AS resposta_status,
             d.nome                                       AS empresa,
             COALESCE(co.fornecedor, 'fornecedor2')       AS fornecedor,
-            COALESCE(co.campanha,   'operacional')        AS campanha
+""" + _COL_ARQUIVO + """
         FROM view_macros_automacao m
         LEFT JOIN respostas      r  ON r.id  = m.resposta_id
         LEFT JOIN distribuidoras d  ON d.id  = m.distribuidora_id
         LEFT JOIN cliente_origem co ON co.cliente_id = m.cliente_id
+""" + _JOIN_ARQUIVO + """
         WHERE m.status != 'pendente'
+          AND m.resposta_id IS NOT NULL
     """,
+
     "api": """
         SELECT
             m.id,
@@ -67,7 +99,7 @@ SQLs = {
             r.status                                     AS resposta_status,
             d.nome                                       AS empresa,
             COALESCE(co.fornecedor, 'fornecedor2')       AS fornecedor,
-            COALESCE(co.campanha,   'operacional')        AS campanha
+            NULL                                         AS arquivo_origem
         FROM tabela_macro_api m
         LEFT JOIN respostas      r  ON r.id  = m.resposta_id
         LEFT JOIN distribuidoras d  ON d.id  = m.distribuidora_id
@@ -96,13 +128,6 @@ def carregar_dados(tipo: str = "macro") -> pd.DataFrame:
             rows = cur.fetchall()
         conn.close()
         df = pd.DataFrame(rows, columns=cols)
-        if not df.empty:
-            df["dia"] = pd.to_datetime(df["dia"], errors="coerce").dt.date
-            # Calcula coluna "arquivo_origem":
-            # - sem data_extracao => dado veio de migracao historica
-            # - com data_extracao => usa campanha como identificador do arquivo/lote
-            sem_extracao = df["data_extracao"].isna() if "data_extracao" in df.columns else pd.Series(False, index=df.index)
-            df["arquivo_origem"] = df["campanha"].where(~sem_extracao, other="Migracao historica")
         _CACHE[tipo] = df
         return df.copy()
     except Exception as e:

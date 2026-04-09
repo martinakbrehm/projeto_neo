@@ -1,9 +1,10 @@
 # Neo Energia — Macro de Consulta de Titularidade
 
-Automação do ciclo completo de consulta de contratos na API Neo Energia:  
+Documentação do ciclo completo de consulta de contratos na API Neo Energia:  
 **banco → SSH + túnel → API → banco**
 
-> Para detalhes técnicos, decisões de arquitetura e histórico de testes, veja [DIARIO_TECNICO.md](DIARIO_TECNICO.md).
+> Para decisões de arquitetura, histórico de testes e inspeções técnicas, veja [DIARIO_TECNICO.md](DIARIO_TECNICO.md).  
+> Para configuração detalhada de SSH, VPN e variáveis de ambiente, veja [CONFIGURACAO.md](CONFIGURACAO.md).
 
 ---
 
@@ -142,7 +143,7 @@ macro/macro/
 ├── plink.exe               # Cliente SSH portável (PuTTY)
 ├── requirements.txt        # Dependências pinadas
 │
-├── README.md               # Este arquivo
+├── DOCUMENTACAO.md         # Este arquivo
 ├── DIARIO_TECNICO.md       # Decisões, testes, inspeções técnicas
 ├── CONFIGURACAO.md         # Guia detalhado de instalação e configuração
 │
@@ -176,8 +177,45 @@ macro/dados/
 
 4. **Limpeza** — Encerra VPN e túnel SSH.
 
-5. **Passo 3 — LOAD** (`04_processar_retorno_macro.py`)  
-   Lê `resultado_lote.csv`, interpreta respostas e atualiza `tabela_macros` no banco.
+5. **Passo 3 — LOAD** (`etl/load/macro/04_processar_retorno_macro.py`)  
+   Lê `resultado_lote.csv`, interpreta respostas via `etl/transformation/macro/interpretar_resposta.py` e atualiza `tabela_macros` no banco.
+
+---
+
+## Lógica de status
+
+O campo `status` em `tabela_macros` segue o fluxo abaixo:
+
+```
+pendente → processando → consolidado   (titularidade confirmada, contrato ativo)
+                       → reprocessar   (titularidade confirmada mas inativa/suspensa,
+                                        ou erro de comunicação — timeout, LIMIT_EXCEEDED)
+                       → excluido      (contrato/doc não existe, titularidade não confirmada)
+                       → pendente      (sem resposta — API não retornou nada,
+                                        ou macro interrompida antes de processar)
+```
+
+**Invariante:** todo registro com `status = 'reprocessar'` ou `'excluido'` **deve ter `resposta_id NOT NULL`**.  
+Registros sem resposta da API voltam como `pendente` (não `reprocessar`) para reentrar na fila normalmente.
+
+### Mapeamento CodigoRetorno → status
+
+| Código | Mensagem | Status |
+|---|---|---|
+| 000 | Conta Contrato não existe | `excluido` |
+| 001 | Doc. fiscal não existe | `excluido` |
+| 002 | Titularidade não confirmada | `excluido` |
+| 003 | Titularidade confirmada — contrato ativo | `consolidado` |
+| 004 | Titularidade confirmada — contrato inativo | `reprocessar` |
+| 005 | Titularidade confirmada — instalação suspensa | `reprocessar` |
+| 006 | Aguardando processamento | `pendente` |
+| 007 | Doc. Fiscal não cadastrado no SAP | `excluido` |
+| 008 | Parceiro não possui conta contrato | `excluido` |
+| 009 | Status instalação: desligado | `reprocessar` |
+| 010 | Status instalação: ligado | `consolidado` |
+| 011 | ERRO | `reprocessar` |
+| — | Sem resposta / macro interrompida | `pendente` |
+| — | Timeout, LIMIT_EXCEEDED, ERRO_RETRY | `reprocessar` (id=11) |
 
 ---
 
@@ -213,41 +251,10 @@ Verifica: banco, qualidade de dados, `.env`, venv, scripts ETL, SSH e túnel. Sa
 | `ModuleNotFoundError` | Dependência faltando no venv | Execute `setup_venv.bat` novamente |
 | Exit Code 1 no plink foreground | Comportamento normal no PS | Use `EXECUTAR.bat` ou via `subprocess.Popen` (orquestrador faz isso) |
 
-## 🔒 Segurança
+---
 
-- As credenciais ficam no arquivo `.env` que não é versionado
-- Chaves SSH e outros arquivos sensíveis são ignorados pelo Git
-- Sempre use senhas fortes e mantenha as credenciais seguras
+## Segurança
 
-## 📝 Logs
-
-O script exibe logs detalhados durante a execução:
-- ✅ Operações bem-sucedidas
-- ⚠️ Avisos e tentativas alternativas
-- ❌ Erros que impedem a execução
-- 🔍 Informações de debug
-
-## 🆘 Solução de Problemas
-
-### Problemas com PuTTY/plink:
-1. **Erro "PuTTY/plink não encontrado"**: 
-   - Instale o PuTTY seguindo as [instruções acima](#-instalação-do-putty)
-   - Reinicie o terminal após a instalação
-   - Teste digitando `plink` no terminal
-
-2. **"'plink' is not recognized"**: 
-   - Verifique se o PuTTY foi instalado corretamente
-   - Adicione manualmente ao PATH: `C:\Program Files\PuTTY\`
-   - Ou coloque o `plink.exe` na pasta do projeto
-
-### Outros problemas:
-3. **Erro de conexão SSH**: Verifique as credenciais no arquivo `.env`
-4. **API não responde**: Verifique se a VPN está ativa no servidor
-5. **Porta ocupada**: O script limpa conexões anteriores automaticamente
-6. **Timeout na conexão**: Verifique firewall e conectividade de rede
-
-### Teste rápido do PuTTY:
-```cmd
-plink -V
-```
-Deve mostrar a versão do PuTTY se estiver instalado corretamente.
+- As credenciais ficam no arquivo `.env`, que **não é versionado** (`.gitignore` garante isso)
+- O `SSH_HOST_KEY` no `.env` evita ataques MITM — não use `-batch` sem ele em produção
+- Nunca compartilhe o `.env` nem o inclua em logs ou prints

@@ -1,5 +1,12 @@
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+
 import pandas as pd
-from ..data import loader
+try:
+    from ..data import loader
+except ImportError:
+    from data import loader
 
 # ID da resposta que representa falha/erro na macro
 RESPOSTA_ID_ERRO = 11
@@ -7,19 +14,23 @@ RESPOSTA_ID_ERRO = 11
 # Statuses que indicam cliente ativo (contrato consolidado)
 STATUS_ATIVO = {"consolidado"}
 # Statuses que indicam cliente inativo/excluído/aguardando
-STATUS_INATIVO = {"excluir", "reprocessar"}
+STATUS_INATIVO = {"excluido", "reprocessar"}
 
 
 def build_dashboard_data(resumo_sel, filtro_empresa,
                          tipo_macro: str = "macro",
-                         filtro_fornecedor: str = None):
-    """Carrega dados do banco, aplica filtros e retorna (data_resumo, data_mensagens).
+                         filtro_fornecedor: str = None,
+                         filtro_arquivo=None):
+    """Carrega dados do banco, aplica filtros e retorna (data_resumo, data_mensagens, data_origens).
 
     - resumo_sel       : list de strings de data (YYYY-MM-DD) ou vazio
     - filtro_empresa   : list ou valor único ou vazio
     - tipo_macro       : 'macro' (tabela_macros) ou 'api' (tabela_macro_api)
     - filtro_fornecedor: 'fornecedor2' | 'contatus' | None (todos)
+    - filtro_arquivo   : list de strings de arquivo_origem ou vazio
     """
+    # Forçar recarga dos dados para ter dados atualizados
+    loader.invalidar_cache(tipo_macro)
     df = loader.carregar_dados(tipo_macro)
 
     if df is None or df.empty:
@@ -30,6 +41,13 @@ def build_dashboard_data(resumo_sel, filtro_empresa,
     # --- filtro de fornecedor ---
     if filtro_fornecedor and "fornecedor" in dff.columns:
         dff = dff[dff["fornecedor"] == filtro_fornecedor]
+
+    # --- filtro de arquivo ---
+    if filtro_arquivo and "arquivo_origem" in dff.columns:
+        if isinstance(filtro_arquivo, list):
+            dff = dff[dff["arquivo_origem"].isin(filtro_arquivo)]
+        else:
+            dff = dff[dff["arquivo_origem"] == filtro_arquivo]
 
     # --- filtro de dias ---
     if resumo_sel:
@@ -57,8 +75,12 @@ def build_dashboard_data(resumo_sel, filtro_empresa,
     data_mensagens = []
     if "mensagem" in dff.columns:
         cnt = (
-            dff.loc[~dff["resposta_id"].eq(RESPOSTA_ID_ERRO), "mensagem"]
-            .fillna("(sem resposta)")
+            dff.loc[
+                dff["resposta_status"].notna() &
+                ~dff["resposta_status"].isin(["pendente"]) &
+                dff["mensagem"].notna(),
+                "mensagem"
+            ]
             .astype(str)
             .str.strip()
             .value_counts()
@@ -79,7 +101,7 @@ def build_dashboard_data(resumo_sel, filtro_empresa,
             .sort_values("quantidade", ascending=False)
         )
         orig["arquivo_origem"] = orig["arquivo_origem"].fillna("(desconhecido)")
-        data_origens = orig.to_dict("records")
+        data_origens = orig.head(10).to_dict("records")
 
     # ---------------------------------------------------------------
     # Masks de status
@@ -127,4 +149,4 @@ def build_dashboard_data(resumo_sel, filtro_empresa,
 
         data_resumo = resumo.to_dict("records")
 
-    return data_resumo, data_mensagens, data_origens
+    return data_resumo, data_mensagens, data_origens, []
