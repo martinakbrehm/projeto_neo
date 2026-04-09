@@ -1,0 +1,1 @@
+# Dashboard de aproveitamento das macros - Módulo principal

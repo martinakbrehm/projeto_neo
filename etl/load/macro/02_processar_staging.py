@@ -324,15 +324,14 @@ def processar_staging(conn, staging_id: int, dry_run: bool) -> dict:
 
             # cliente_origem para os recém inseridos
             rows_orig = [
-                (cpf_map[c], "fornecedor2", filepath.name, data_criacao)
+                (cpf_map[c], "fornecedor2", data_criacao)
                 for c in novos_cpfs if c in cpf_map
             ]
             if rows_orig:
                 cur_w.executemany(
-                    "INSERT INTO cliente_origem"
-                    " (cliente_id, fornecedor, campanha, data_import)"
-                    " VALUES (%s, %s, %s, %s)"
-                    " ON DUPLICATE KEY UPDATE campanha=VALUES(campanha)",
+                    "INSERT IGNORE INTO cliente_origem"
+                    " (cliente_id, fornecedor, data_import)"
+                    " VALUES (%s, %s, %s)",
                     rows_orig,
                 )
         else:

@@ -67,8 +67,9 @@ _CODIGO_PARA_STATUS: dict[int, tuple[int, str]] = {
     11: (11, "reprocessar"),
 }
 
-# Usado quando a resposta é vazia/None (dado não chegou)
-_PADRAO_VAZIO       = (11, "reprocessar")
+# Usado quando a resposta é vazia/None (dado não chegou — API não respondeu)
+# Código 6 = "Aguardando processamento" → status pendente (volta para a fila)
+_PADRAO_VAZIO       = (6, "pendente")
 # Usado para strings de erro de comunicação ou código desconhecido
 _PADRAO_DESCONHECIDO = (11, "reprocessar")
 
@@ -164,8 +165,8 @@ if __name__ == "__main__":
         ("peak connections limit exceeded",              (11, "reprocessar")),
         ("LIMIT_EXCEEDED",                               (11, "reprocessar")),
         ("ERRO_RETRY: ReadTimeout",                      (11, "reprocessar")),
-        ("",                                             (11, "pendente")),
-        (None,                                           (11, "pendente")),
+        ("",                                             (6,  "pendente")),   # _PADRAO_VAZIO: sem resposta da API → pendente (volta para fila)
+        (None,                                           (6,  "pendente")),   # idem
         ("alguma resposta desconhecida",                 (11, "reprocessar")),
     ]
 
