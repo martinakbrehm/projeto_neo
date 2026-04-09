@@ -5,6 +5,7 @@ macro/macro/.env
 macro/macro/.env.local
 macro/macro/.env.production
 !macro/macro/.env.example
+api_automation/api_credentials.py
 
 # Python
 __pycache__/
