@@ -149,4 +149,37 @@ def build_dashboard_data(resumo_sel, filtro_empresa,
 
         data_resumo = resumo.to_dict("records")
 
-    return data_resumo, data_mensagens, data_origens, []
+    return data_resumo, data_mensagens, data_origens, build_tabela_arquivos()
+
+
+def build_tabela_arquivos() -> list:
+    """Retorna lista de dicts com estatísticas por arquivo de staging.
+
+    Colunas: arquivo, data_carga, cpfs_no_arquivo, ucs_processadas,
+             ativos, pct_ativos, inativos, pct_inativos
+    """
+    df = loader.carregar_stats_por_arquivo()
+    if df is None or df.empty:
+        return []
+
+    # Calcular percentuais sobre UCs processadas
+    df["total_proc"] = df["ativos"].fillna(0).astype(int) + df["inativos"].fillna(0).astype(int)
+    df["pct_ativos"] = df.apply(
+        lambda r: f"{round(r['ativos'] / r['total_proc'] * 100, 1)}%" if r["total_proc"] > 0 else "-",
+        axis=1,
+    )
+    df["pct_inativos"] = df.apply(
+        lambda r: f"{round(r['inativos'] / r['total_proc'] * 100, 1)}%" if r["total_proc"] > 0 else "-",
+        axis=1,
+    )
+
+    # Garantir tipos inteiros JSON-serializáveis
+    for col in ["cpfs_no_arquivo", "ucs_processadas", "ativos", "inativos"]:
+        df[col] = df[col].fillna(0).astype(int)
+
+    df["data_carga"] = df["data_carga"].astype(str)
+
+    return df[[
+        "arquivo", "data_carga", "cpfs_no_arquivo",
+        "ucs_processadas", "ativos", "pct_ativos", "inativos", "pct_inativos",
+    ]].to_dict("records")

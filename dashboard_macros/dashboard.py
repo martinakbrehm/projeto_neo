@@ -263,6 +263,46 @@ app.layout = html.Div([
         ], style={"background": "#fff", "borderRadius": "8px", "boxShadow": "0 2px 8px #e0e0e0",
                   "padding": "16px", "marginBottom": "18px"}),
 
+        # Card: Estatísticas por arquivo de carga
+        html.Div([
+            html.H3("Resultados por arquivo carregado",
+                    style={**SUBTITLE_STYLE, "marginTop": "0", "marginBottom": "6px"}),
+            html.P(
+                "Por arquivo de staging: CPFs únicos enviados, UCs processadas na macro e resultado "
+                "(ativo = consolidado / inativo = excluído ou reprocessar). "
+                "Status reflete a rodagem mais recente de cada CPF.",
+                style={"fontSize": "13px", "color": "#666", "marginBottom": "10px"}
+            ),
+            dash_table.DataTable(
+                id="tabela-arquivos",
+                columns=[
+                    {"name": "Arquivo",           "id": "arquivo"},
+                    {"name": "Data carga",         "id": "data_carga"},
+                    {"name": "CPFs no arquivo",    "id": "cpfs_no_arquivo"},
+                    {"name": "UCs processadas",    "id": "ucs_processadas"},
+                    {"name": "Ativos",             "id": "ativos"},
+                    {"name": "% Ativos",           "id": "pct_ativos"},
+                    {"name": "Inativos",           "id": "inativos"},
+                    {"name": "% Inativos",         "id": "pct_inativos"},
+                ],
+                data=[],
+                style_table={"overflowX": "auto", "borderRadius": "8px",
+                             "boxShadow": "0 2px 8px #e0e0e0", "marginTop": "4px"},
+                style_cell={"textAlign": "center", "fontFamily": "Roboto", "fontSize": "14px",
+                            "padding": "8px", "whiteSpace": "normal", "height": "auto"},
+                style_cell_conditional=[
+                    {"if": {"column_id": "arquivo"}, "textAlign": "left"},
+                ],
+                style_header={"backgroundColor": "#8e44ad", "color": "white",
+                               "fontWeight": "bold", "fontFamily": "Roboto", "fontSize": "15px"},
+                style_data_conditional=[
+                    {"if": {"row_index": "odd"}, "backgroundColor": "#fafafa"},
+                ],
+                page_size=15,
+            ),
+        ], style={"background": "#fff", "borderRadius": "8px", "boxShadow": "0 2px 8px #e0e0e0",
+                  "padding": "16px", "marginBottom": "18px"}),
+
     ], style={"background": "#f4f6f8", "padding": "28px", "borderRadius": "10px", "marginBottom": "32px"})),
 
     html.Div(style={"height": "8px"}),
@@ -326,6 +366,7 @@ def atualizar_opcoes_filtros(tipo_macro, fornecedor):
         dash.dependencies.Output("tabela-resumo",    "data"),
         dash.dependencies.Output("tabela-mensagens", "data"),
         dash.dependencies.Output("tabela-origens",   "data"),
+        dash.dependencies.Output("tabela-arquivos",  "data"),
     ],
     [
         dash.dependencies.Input("resumo-dia-dropdown",     "value"),
@@ -339,7 +380,7 @@ def atualizar_dashboard(resumo_sel, filtro_empresa, filtro_arquivo, tipo_macro, 
     tipo = tipo_macro or "macro"
     filtro_forn = fornecedor if fornecedor and fornecedor != "todos" else None
     try:
-        data_resumo, data_mensagens, data_origens, _ = orchestrator.build_dashboard_data(
+        data_resumo, data_mensagens, data_origens, data_arquivos = orchestrator.build_dashboard_data(
             resumo_sel, filtro_empresa, tipo_macro=tipo,
             filtro_fornecedor=filtro_forn, filtro_arquivo=filtro_arquivo,
         )
@@ -347,7 +388,8 @@ def atualizar_dashboard(resumo_sel, filtro_empresa, filtro_arquivo, tipo_macro, 
         data_resumo = []
         data_mensagens = []
         data_origens = []
-    return data_resumo, data_mensagens, data_origens
+        data_arquivos = []
+    return data_resumo, data_mensagens, data_origens, data_arquivos
 
 
 @app.server.route("/_debug/data")
@@ -355,7 +397,7 @@ def debug_data():
     try:
         print("DEBUG: Chamando build_dashboard_data")
         import traceback
-        data_resumo, data_mensagens, data_origens, data_extra = orchestrator.build_dashboard_data(
+        data_resumo, data_mensagens, data_origens, data_arquivos = orchestrator.build_dashboard_data(
             [], None, "macro", None, None
         )
         print(f"DEBUG: Retornou {len(data_resumo)} registros no resumo")
@@ -363,7 +405,7 @@ def debug_data():
             "data_resumo":    data_resumo,
             "data_mensagens": data_mensagens,
             "data_origens":   data_origens,
-            "data_extra":     data_extra,
+            "data_arquivos":  data_arquivos,
         })
     except Exception as e:
         print(f"DEBUG: Erro: {e}")

@@ -18,17 +18,16 @@ _CTE_ARQUIVO = """"""
 # Expressão de arquivo_origem usada nos SELECTs
 _COL_ARQUIVO = """
             CASE
-                WHEN DATE(m.data_criacao) < '2026-03-01' THEN 'Dados históricos'
+                WHEN m.data_extracao IS NULL THEN 'Dados históricos'
                 ELSE COALESCE(
                     (SELECT si.filename
                      FROM staging_import_rows sir
                      JOIN staging_imports si ON si.id = sir.staging_id
                      WHERE sir.normalized_cpf = cl.cpf
                        AND sir.validation_status = 'valid'
-                       AND si.created_at < m.data_extracao
                      ORDER BY sir.id DESC
                      LIMIT 1),
-                    'operacional_fallback'
+                    'Dados históricos'
                 )
             END AS arquivo_origem
 """
@@ -140,3 +139,45 @@ def invalidar_cache(tipo: str = None):
         _CACHE.pop(tipo, None)
     else:
         _CACHE.clear()
+
+
+# SQL para estatísticas por arquivo de staging (não usa cache — sempre atualizado)
+_SQL_STATS_ARQUIVO = """
+    SELECT
+        si.filename                                              AS arquivo,
+        DATE(si.created_at)                                      AS data_carga,
+        COUNT(DISTINCT sir.normalized_cpf)                       AS cpfs_no_arquivo,
+        COUNT(m.id)                                              AS ucs_processadas,
+        SUM(CASE WHEN m.status = 'consolidado'                THEN 1 ELSE 0 END) AS ativos,
+        SUM(CASE WHEN m.status IN ('excluido','reprocessar')  THEN 1 ELSE 0 END) AS inativos
+    FROM staging_imports si
+    JOIN staging_import_rows sir
+        ON sir.staging_id = si.id
+       AND sir.validation_status = 'valid'
+    LEFT JOIN clientes cl
+        ON cl.cpf = sir.normalized_cpf
+    LEFT JOIN tabela_macros m
+        ON m.cliente_id = cl.id
+       AND m.status  != 'pendente'
+       AND m.resposta_id IS NOT NULL
+    GROUP BY si.id, si.filename, DATE(si.created_at)
+    ORDER BY si.id DESC
+"""
+
+
+def carregar_stats_por_arquivo() -> pd.DataFrame:
+    """Retorna estatísticas por arquivo de staging (CPFs, UCs, ativos, inativos).
+
+    Não usa cache — sempre busca do banco para refletir estado atual.
+    """
+    try:
+        conn = pymysql.connect(**DB_CONFIG)
+        with conn.cursor() as cur:
+            cur.execute(_SQL_STATS_ARQUIVO)
+            cols = [d[0] for d in cur.description]
+            rows = cur.fetchall()
+        conn.close()
+        return pd.DataFrame(rows, columns=cols)
+    except Exception as e:
+        print(f"[ERRO] carregar_stats_por_arquivo: {e}")
+        return pd.DataFrame()
