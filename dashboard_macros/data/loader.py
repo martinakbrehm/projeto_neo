@@ -142,34 +142,53 @@ def invalidar_cache(tipo: str = None):
 
 
 # SQL para estatísticas por arquivo de staging (não usa cache — sempre atualizado)
+# Conta combinações CPF+UC distintas do arquivo e quantas já têm registro
+# em tabela_macros via cliente_uc_id (vínculo exato) ou fallback por CPF+distribuidora.
 _SQL_STATS_ARQUIVO = """
     SELECT
-        si.filename                                              AS arquivo,
-        DATE(si.created_at)                                      AS data_carga,
-        COUNT(DISTINCT sir.normalized_cpf)                       AS cpfs_no_arquivo,
-        COUNT(m.id)                                              AS ucs_processadas,
-        SUM(CASE WHEN m.status = 'consolidado'                THEN 1 ELSE 0 END) AS ativos,
-        SUM(CASE WHEN m.status IN ('excluido','reprocessar')  THEN 1 ELSE 0 END) AS inativos
+        si.filename                                                          AS arquivo,
+        DATE(si.created_at)                                                  AS data_carga,
+        COUNT(DISTINCT CONCAT(sir.normalized_cpf, '|', COALESCE(sir.normalized_uc, ''))) AS cpfs_no_arquivo,
+        COUNT(DISTINCT CASE
+            WHEN m.id IS NOT NULL
+            THEN CONCAT(sir.normalized_cpf, '|', COALESCE(sir.normalized_uc, ''))
+        END)                                                                 AS cpfs_processados,
+        COUNT(DISTINCT CASE
+            WHEN m.status = 'consolidado'
+            THEN CONCAT(sir.normalized_cpf, '|', COALESCE(sir.normalized_uc, ''))
+        END)                                                                 AS ativos,
+        COUNT(DISTINCT CASE
+            WHEN m.status IN ('excluido','reprocessar')
+            THEN CONCAT(sir.normalized_cpf, '|', COALESCE(sir.normalized_uc, ''))
+        END)                                                                 AS inativos
     FROM staging_imports si
     JOIN staging_import_rows sir
         ON sir.staging_id = si.id
        AND sir.validation_status = 'valid'
     LEFT JOIN clientes cl
         ON cl.cpf = sir.normalized_cpf
+    -- Caso 1: normalized_uc preenchida → resolve via cliente_uc (vínculo exato)
+    LEFT JOIN cliente_uc cu
+        ON cu.cliente_id     = cl.id
+       AND cu.uc             = sir.normalized_uc
+       AND cu.distribuidora_id = CAST(si.distribuidora_nome AS UNSIGNED)
+    -- tabela_macros: prefere vínculo por cliente_uc_id; fallback por cliente_id+distribuidora
     LEFT JOIN tabela_macros m
-        ON m.cliente_id = cl.id
-       AND m.status  != 'pendente'
-       AND m.resposta_id IS NOT NULL
+        ON (
+              (cu.id IS NOT NULL AND m.cliente_uc_id = cu.id)
+           OR (cu.id IS NULL     AND m.cliente_id = cl.id
+                                  AND m.distribuidora_id = CAST(si.distribuidora_nome AS UNSIGNED))
+           )
+       AND m.status       != 'pendente'
+       AND m.resposta_id  IS NOT NULL
     GROUP BY si.id, si.filename, DATE(si.created_at)
     ORDER BY si.id DESC
+    LIMIT 15
 """
 
 
 def carregar_stats_por_arquivo() -> pd.DataFrame:
-    """Retorna estatísticas por arquivo de staging (CPFs, UCs, ativos, inativos).
-
-    Não usa cache — sempre busca do banco para refletir estado atual.
-    """
+    """Retorna estatísticas dos últimos 15 arquivos de staging por CPF+distribuidora."""
     try:
         conn = pymysql.connect(**DB_CONFIG)
         with conn.cursor() as cur:
@@ -181,3 +200,5 @@ def carregar_stats_por_arquivo() -> pd.DataFrame:
     except Exception as e:
         print(f"[ERRO] carregar_stats_por_arquivo: {e}")
         return pd.DataFrame()
+
+
