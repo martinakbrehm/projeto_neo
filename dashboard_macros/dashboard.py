@@ -62,9 +62,9 @@ def index():
 # Sobrescrever a view function padrão
 app.server.view_functions['index'] = index
 
-TITLE_STYLE         = {"fontFamily": "Roboto", "color": "#2c3e50", "fontWeight": "700", "fontSize": "22px"}
-SECTION_TITLE_STYLE = {"fontFamily": "Roboto", "color": "#2980b9", "fontWeight": "700", "fontSize": "18px"}
-SUBTITLE_STYLE      = {"fontFamily": "Roboto", "color": "#2c3e50", "fontWeight": "700", "fontSize": "16px"}
+TITLE_STYLE         = {"fontFamily": "Roboto", "color": "#1a237e", "fontWeight": "700", "fontSize": "22px"}
+SECTION_TITLE_STYLE = {"fontFamily": "Roboto", "color": "#3949ab", "fontWeight": "700", "fontSize": "18px"}
+SUBTITLE_STYLE      = {"fontFamily": "Roboto", "color": "#283593", "fontWeight": "700", "fontSize": "16px"}
 
 loader.invalidar_cache("macro")
 _df_inicial             = loader.carregar_dados("macro")
@@ -94,7 +94,7 @@ app.layout = html.Div([
     # Seletor Macro / API
     html.Div([
         html.Label("Selecionar macro:", style={"fontWeight": "700", "fontSize": "14px",
-                                               "marginRight": "12px", "color": "#2c3e50"}),
+                                               "marginRight": "12px", "color": "#1a237e"}),
         dcc.RadioItems(
             id="selector-tipo-macro",
             options=[
@@ -107,14 +107,14 @@ app.layout = html.Div([
             labelStyle={"marginRight": "24px", "fontFamily": "Roboto", "fontSize": "15px",
                         "fontWeight": "600", "cursor": "pointer"},
         ),
-    ], style={"background": "#eaf4fb", "padding": "10px 16px", "borderRadius": "8px",
+    ], style={"background": "#e8eaf6", "padding": "10px 16px", "borderRadius": "8px",
               "marginBottom": "8px", "display": "flex", "alignItems": "center",
-              "boxShadow": "0 1px 4px rgba(44,62,80,0.08)"}),
+              "boxShadow": "0 1px 4px rgba(26,35,126,0.10)"}),
 
     # Seletor Fornecedor
     html.Div([
         html.Label("Fornecedor:", style={"fontWeight": "700", "fontSize": "14px",
-                                         "marginRight": "12px", "color": "#2c3e50"}),
+                                         "marginRight": "12px", "color": "#1a237e"}),
         dcc.RadioItems(
             id="selector-fornecedor",
             options=[
@@ -128,9 +128,9 @@ app.layout = html.Div([
             labelStyle={"marginRight": "24px", "fontFamily": "Roboto", "fontSize": "15px",
                         "fontWeight": "600", "cursor": "pointer"},
         ),
-    ], style={"background": "#f0f7f0", "padding": "10px 16px", "borderRadius": "8px",
+    ], style={"background": "#ede7f6", "padding": "10px 16px", "borderRadius": "8px",
               "marginBottom": "12px", "display": "flex", "alignItems": "center",
-              "boxShadow": "0 1px 4px rgba(44,62,80,0.08)"}),
+              "boxShadow": "0 1px 4px rgba(74,20,140,0.10)"}),
 
     # Info bar
     html.Div(id="info-registros", style={"marginBottom": "12px", "fontSize": "14px", "fontWeight": "600"}),
@@ -139,7 +139,7 @@ app.layout = html.Div([
     html.Div([
         html.Div([
             html.Label("Filtrar dias", style={"fontWeight": "700", "fontSize": "13px",
-                                              "marginBottom": "6px", "display": "block", "color": "#2c3e50"}),
+                                              "marginBottom": "6px", "display": "block", "color": "#1a237e"}),
             dcc.Dropdown(
                 id="resumo-dia-dropdown",
                 options=[{"label": str(d), "value": str(d)} for d in _opcoes_dia_inicial],
@@ -151,7 +151,7 @@ app.layout = html.Div([
 
         html.Div([
             html.Label("Filtrar empresa", style={"fontWeight": "700", "fontSize": "13px",
-                                                 "marginBottom": "6px", "display": "block", "color": "#2c3e50"}),
+                                                 "marginBottom": "6px", "display": "block", "color": "#1a237e"}),
             dcc.Dropdown(
                 id="filtro-empresa-dropdown",
                 options=[{"label": str(e), "value": str(e)} for e in _opcoes_empresa_inicial],
@@ -163,7 +163,7 @@ app.layout = html.Div([
 
         html.Div([
             html.Label("Filtrar arquivo", style={"fontWeight": "700", "fontSize": "13px",
-                                                  "marginBottom": "6px", "display": "block", "color": "#2c3e50"}),
+                                                  "marginBottom": "6px", "display": "block", "color": "#1a237e"}),
             dcc.Dropdown(
                 id="filtro-arquivo-dropdown",
                 options=[{"label": str(a), "value": str(a)} for a in _opcoes_arquivo_inicial],
@@ -191,12 +191,12 @@ app.layout = html.Div([
                 style_table={"overflowX": "auto"},
                 style_cell={"textAlign": "center", "fontFamily": "Roboto", "fontSize": "15px",
                             "padding": "10px", "whiteSpace": "normal", "height": "auto"},
-                style_header={"backgroundColor": "#2980b9", "color": "white",
+                style_header={"backgroundColor": "#3949ab", "color": "white",
                                "fontWeight": "bold", "fontFamily": "Roboto", "fontSize": "15px"},
                 style_data_conditional=[
-                    {"if": {"row_index": "odd"}, "backgroundColor": "#fafafa"},
+                    {"if": {"row_index": "odd"}, "backgroundColor": "#f3f4ff"},
                     {"if": {"filter_query": '{dia} = "Total"'}, "fontWeight": "bold",
-                     "backgroundColor": "#d6eaf8"},
+                     "backgroundColor": "#e8eaf6"},
                 ],
                 page_size=20,
             ),
@@ -219,10 +219,10 @@ app.layout = html.Div([
                                  "boxShadow": "0 2px 8px #e0e0e0", "marginTop": "12px"},
                     style_cell={"textAlign": "left", "fontFamily": "Roboto", "fontSize": "14px",
                                 "padding": "8px", "whiteSpace": "normal", "height": "auto"},
-                    style_header={"backgroundColor": "#2980b9", "color": "white",
+                    style_header={"backgroundColor": "#3949ab", "color": "white",
                                    "fontWeight": "bold", "fontFamily": "Roboto", "fontSize": "15px"},
                     style_data_conditional=[
-                        {"if": {"row_index": "odd"}, "backgroundColor": "#fafafa"},
+                        {"if": {"row_index": "odd"}, "backgroundColor": "#f3f4ff"},
                     ],
                     page_size=12,
                 ),
@@ -231,59 +231,29 @@ app.layout = html.Div([
 
         ], style={"width": "100%"}),
 
-        # Card: Arquivo de origem
-        html.Div([
-            html.H3("Registros por arquivo de origem",
-                    style={**SUBTITLE_STYLE, "marginTop": "0", "marginBottom": "8px"}),
-            html.P(
-                "Migracao historica = registros importados sem data de extracao (ETL manual). "
-                "Demais valores indicam o lote/campanha do pipeline automatico.",
-                style={"fontSize": "13px", "color": "#666", "marginBottom": "10px"}
-            ),
-            dash_table.DataTable(
-                id="tabela-origens",
-                columns=[
-                    {"name": "Arquivo / Origem", "id": "arquivo_origem"},
-                    {"name": "Quantidade",        "id": "quantidade"},
-                ],
-                data=[],
-                style_table={"overflowX": "auto", "borderRadius": "8px",
-                             "boxShadow": "0 2px 8px #e0e0e0", "marginTop": "4px"},
-                style_cell={"textAlign": "left", "fontFamily": "Roboto", "fontSize": "14px",
-                            "padding": "8px", "whiteSpace": "normal", "height": "auto"},
-                style_header={"backgroundColor": "#27ae60", "color": "white",
-                               "fontWeight": "bold", "fontFamily": "Roboto", "fontSize": "15px"},
-                style_data_conditional=[
-                    {"if": {"row_index": "odd"}, "backgroundColor": "#fafafa"},
-                    {"if": {"filter_query": '{arquivo_origem} = "Migracao historica"'},
-                     "backgroundColor": "#fef9e7", "fontStyle": "italic"},
-                ],
-                page_size=10,
-            ),
-        ], style={"background": "#fff", "borderRadius": "8px", "boxShadow": "0 2px 8px #e0e0e0",
-                  "padding": "16px", "marginBottom": "18px"}),
-
-        # Card: Estatísticas por arquivo de carga
+        # Card: Resultados por arquivo carregado
         html.Div([
             html.H3("Resultados por arquivo carregado",
                     style={**SUBTITLE_STYLE, "marginTop": "0", "marginBottom": "6px"}),
             html.P(
-                "Por arquivo de staging: CPFs únicos enviados, UCs processadas na macro e resultado "
+                "Últimos 15 arquivos importados: CPFs únicos enviados pelo fornecedor, "
+                "quantos foram processados pela macro naquela distribuidora "
                 "(ativo = consolidado / inativo = excluído ou reprocessar). "
-                "Status reflete a rodagem mais recente de cada CPF.",
+                "Pendentes = combinações CPF+UC do arquivo que ainda não rodaram.",
                 style={"fontSize": "13px", "color": "#666", "marginBottom": "10px"}
             ),
             dash_table.DataTable(
                 id="tabela-arquivos",
                 columns=[
-                    {"name": "Arquivo",           "id": "arquivo"},
-                    {"name": "Data carga",         "id": "data_carga"},
-                    {"name": "CPFs no arquivo",    "id": "cpfs_no_arquivo"},
-                    {"name": "UCs processadas",    "id": "ucs_processadas"},
-                    {"name": "Ativos",             "id": "ativos"},
-                    {"name": "% Ativos",           "id": "pct_ativos"},
-                    {"name": "Inativos",           "id": "inativos"},
-                    {"name": "% Inativos",         "id": "pct_inativos"},
+                    {"name": "Arquivo",              "id": "arquivo"},
+                    {"name": "Data carga",            "id": "data_carga"},
+                    {"name": "CPF+UCs no arquivo",   "id": "cpfs_no_arquivo"},
+                    {"name": "Processados",           "id": "cpfs_processados"},
+                    {"name": "Pendentes",             "id": "cpfs_pendentes"},
+                    {"name": "Ativos",                "id": "ativos"},
+                    {"name": "% Ativos",              "id": "pct_ativos"},
+                    {"name": "Inativos",              "id": "inativos"},
+                    {"name": "% Inativos",            "id": "pct_inativos"},
                 ],
                 data=[],
                 style_table={"overflowX": "auto", "borderRadius": "8px",
@@ -293,22 +263,22 @@ app.layout = html.Div([
                 style_cell_conditional=[
                     {"if": {"column_id": "arquivo"}, "textAlign": "left"},
                 ],
-                style_header={"backgroundColor": "#8e44ad", "color": "white",
+                style_header={"backgroundColor": "#7b1fa2", "color": "white",
                                "fontWeight": "bold", "fontFamily": "Roboto", "fontSize": "15px"},
                 style_data_conditional=[
-                    {"if": {"row_index": "odd"}, "backgroundColor": "#fafafa"},
+                    {"if": {"row_index": "odd"}, "backgroundColor": "#f3e5f5"},
                 ],
                 page_size=15,
             ),
         ], style={"background": "#fff", "borderRadius": "8px", "boxShadow": "0 2px 8px #e0e0e0",
                   "padding": "16px", "marginBottom": "18px"}),
 
-    ], style={"background": "#f4f6f8", "padding": "28px", "borderRadius": "10px", "marginBottom": "32px"})),
+    ], style={"background": "#e8eaf6", "padding": "28px", "borderRadius": "10px", "marginBottom": "32px"})),
 
     html.Div(style={"height": "8px"}),
 
 ], style={"maxWidth": "1100px", "margin": "0 auto", "fontFamily": "Roboto",
-          "background": "#fff", "padding": "16px 0"})
+          "background": "#f0f2f8", "padding": "16px 0"})
 
 
 # --------------------------------------------------------------------------
@@ -365,7 +335,6 @@ def atualizar_opcoes_filtros(tipo_macro, fornecedor):
     [
         dash.dependencies.Output("tabela-resumo",    "data"),
         dash.dependencies.Output("tabela-mensagens", "data"),
-        dash.dependencies.Output("tabela-origens",   "data"),
         dash.dependencies.Output("tabela-arquivos",  "data"),
     ],
     [
@@ -380,16 +349,15 @@ def atualizar_dashboard(resumo_sel, filtro_empresa, filtro_arquivo, tipo_macro, 
     tipo = tipo_macro or "macro"
     filtro_forn = fornecedor if fornecedor and fornecedor != "todos" else None
     try:
-        data_resumo, data_mensagens, data_origens, data_arquivos = orchestrator.build_dashboard_data(
+        data_resumo, data_mensagens, data_arquivos = orchestrator.build_dashboard_data(
             resumo_sel, filtro_empresa, tipo_macro=tipo,
             filtro_fornecedor=filtro_forn, filtro_arquivo=filtro_arquivo,
         )
     except Exception:
         data_resumo = []
         data_mensagens = []
-        data_origens = []
         data_arquivos = []
-    return data_resumo, data_mensagens, data_origens, data_arquivos
+    return data_resumo, data_mensagens, data_arquivos
 
 
 @app.server.route("/_debug/data")
@@ -397,14 +365,13 @@ def debug_data():
     try:
         print("DEBUG: Chamando build_dashboard_data")
         import traceback
-        data_resumo, data_mensagens, data_origens, data_arquivos = orchestrator.build_dashboard_data(
+        data_resumo, data_mensagens, data_arquivos = orchestrator.build_dashboard_data(
             [], None, "macro", None, None
         )
         print(f"DEBUG: Retornou {len(data_resumo)} registros no resumo")
         return jsonify({
             "data_resumo":    data_resumo,
             "data_mensagens": data_mensagens,
-            "data_origens":   data_origens,
             "data_arquivos":  data_arquivos,
         })
     except Exception as e:

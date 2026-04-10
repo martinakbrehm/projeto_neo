@@ -90,20 +90,6 @@ def build_dashboard_data(resumo_sel, filtro_empresa,
         data_mensagens = cnt.to_dict("records")
 
     # ---------------------------------------------------------------
-    # Distribuicao por arquivo_origem
-    # ---------------------------------------------------------------
-    data_origens = []
-    if "arquivo_origem" in dff.columns:
-        orig = (
-            dff.groupby("arquivo_origem", dropna=False)
-            .size()
-            .reset_index(name="quantidade")
-            .sort_values("quantidade", ascending=False)
-        )
-        orig["arquivo_origem"] = orig["arquivo_origem"].fillna("(desconhecido)")
-        data_origens = orig.head(10).to_dict("records")
-
-    # ---------------------------------------------------------------
     # Masks de status
     # ---------------------------------------------------------------
     mask_ativo   = dff["status"].isin(STATUS_ATIVO)
@@ -149,20 +135,15 @@ def build_dashboard_data(resumo_sel, filtro_empresa,
 
         data_resumo = resumo.to_dict("records")
 
-    return data_resumo, data_mensagens, data_origens, build_tabela_arquivos()
+    return data_resumo, data_mensagens, build_tabela_arquivos()
 
 
 def build_tabela_arquivos() -> list:
-    """Retorna lista de dicts com estatísticas por arquivo de staging.
-
-    Colunas: arquivo, data_carga, cpfs_no_arquivo, ucs_processadas,
-             ativos, pct_ativos, inativos, pct_inativos
-    """
+    """Retorna lista de dicts com estatísticas dos últimos 15 arquivos de staging."""
     df = loader.carregar_stats_por_arquivo()
     if df is None or df.empty:
         return []
 
-    # Calcular percentuais sobre UCs processadas
     df["total_proc"] = df["ativos"].fillna(0).astype(int) + df["inativos"].fillna(0).astype(int)
     df["pct_ativos"] = df.apply(
         lambda r: f"{round(r['ativos'] / r['total_proc'] * 100, 1)}%" if r["total_proc"] > 0 else "-",
@@ -173,13 +154,13 @@ def build_tabela_arquivos() -> list:
         axis=1,
     )
 
-    # Garantir tipos inteiros JSON-serializáveis
-    for col in ["cpfs_no_arquivo", "ucs_processadas", "ativos", "inativos"]:
+    for col in ["cpfs_no_arquivo", "cpfs_processados", "ativos", "inativos"]:
         df[col] = df[col].fillna(0).astype(int)
 
+    df["cpfs_pendentes"] = df["cpfs_no_arquivo"] - df["cpfs_processados"]
     df["data_carga"] = df["data_carga"].astype(str)
 
     return df[[
         "arquivo", "data_carga", "cpfs_no_arquivo",
-        "ucs_processadas", "ativos", "pct_ativos", "inativos", "pct_inativos",
+        "cpfs_processados", "ativos", "pct_ativos", "inativos", "pct_inativos", "cpfs_pendentes",
     ]].to_dict("records")

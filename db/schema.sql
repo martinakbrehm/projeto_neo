@@ -228,11 +228,12 @@ CREATE TABLE IF NOT EXISTS telefones (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Tabela equivalente a tabela_retornos_2: tabela_macros
--- Registra os retornos/processamentos por cliente + distribuidora
+-- Registra os retornos/processamentos por cliente + uc + distribuidora
 CREATE TABLE IF NOT EXISTS tabela_macros (
   id INT NOT NULL AUTO_INCREMENT,
   cliente_id INT NOT NULL,
   distribuidora_id TINYINT UNSIGNED NOT NULL,
+  cliente_uc_id INT NULL,              -- vínculo exato com a UC processada (NULL em históricos ambíguos)
   resposta_id TINYINT UNSIGNED DEFAULT NULL,
   qtd_faturas INT DEFAULT NULL,
   valor_debito DECIMAL(10,2) DEFAULT NULL,
@@ -248,7 +249,8 @@ CREATE TABLE IF NOT EXISTS tabela_macros (
   PRIMARY KEY (id),
   CONSTRAINT fk_tabela_macros_cliente FOREIGN KEY (cliente_id) REFERENCES clientes (id) ON DELETE CASCADE,
   CONSTRAINT fk_tabela_macros_distribuidora FOREIGN KEY (distribuidora_id) REFERENCES distribuidoras (id) ON DELETE RESTRICT,
-  CONSTRAINT fk_tabela_macros_resposta FOREIGN KEY (resposta_id) REFERENCES respostas (id) ON DELETE SET NULL
+  CONSTRAINT fk_tabela_macros_resposta FOREIGN KEY (resposta_id) REFERENCES respostas (id) ON DELETE SET NULL,
+  CONSTRAINT fk_tabela_macros_cliente_uc FOREIGN KEY (cliente_uc_id) REFERENCES cliente_uc (id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Observação: as alterações de renomeação de colunas e adição de `data_update` foram
@@ -404,12 +406,14 @@ CREATE TABLE IF NOT EXISTS staging_import_rows (
   raw_telefone VARCHAR(255) DEFAULT NULL,
   raw_endereco VARCHAR(255) DEFAULT NULL,
   normalized_cpf CHAR(11) DEFAULT NULL,
+  normalized_uc CHAR(10) DEFAULT NULL,   -- UC normalizada (zerada à esquerda) do arquivo de origem
   validation_status ENUM('new','valid','invalid','skipped') DEFAULT 'new',
   validation_message VARCHAR(255) DEFAULT NULL,
   processed_at DATETIME DEFAULT NULL,
   PRIMARY KEY (id),
   INDEX idx_staging_rows_staging (staging_id),
   INDEX idx_staging_rows_normcpf (normalized_cpf),
+  INDEX idx_staging_rows_normuc (normalized_uc),
   CONSTRAINT fk_staging_rows_imports FOREIGN KEY (staging_id) REFERENCES staging_imports (id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 

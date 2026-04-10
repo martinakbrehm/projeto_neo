@@ -177,9 +177,10 @@ def carregar_maps(cur) -> tuple[dict, dict, set, set, set]:
     cur.execute("SELECT cliente_id, uc, distribuidora_id, id FROM cliente_uc")
     uc_map = {(r[0], r[1], r[2]): r[3] for r in cur.fetchall()}
 
-    cur.execute("SELECT cliente_id, distribuidora_id FROM tabela_macros "
+    cur.execute("SELECT cliente_id, distribuidora_id, COALESCE(cliente_uc_id, 0) "
+                "FROM tabela_macros "
                 "WHERE status='pendente' AND data_criacao_data=CURDATE()")
-    macros_hoje = {(r[0], r[1]) for r in cur.fetchall()}
+    macros_hoje = {(r[0], r[1], r[2]) for r in cur.fetchall()}
 
     cur.execute("SELECT cliente_id, telefone FROM telefones WHERE telefone IS NOT NULL")
     tel_set = {(r[0], int(r[1])) for r in cur.fetchall()}
@@ -421,17 +422,19 @@ def processar_staging(conn, staging_id: int, dry_run: bool) -> dict:
             cid = cpf_map.get(d["cpf"])
             if not cid:
                 continue
-            chave_macro = (cid if cid > 0 else 0, distrib_id)
+            cid_key = cid if cid > 0 else 0
+            uc_id = uc_map.get((cid_key, d["uc"], distrib_id)) or 0
+            chave_macro = (cid_key, distrib_id, uc_id)
             if chave_macro not in macros_hoje:
-                rows_macros.append((cid, distrib_id, RESPOSTA_PENDENTE, data_criacao))
+                rows_macros.append((cid, distrib_id, uc_id or None, RESPOSTA_PENDENTE, data_criacao))
                 macros_hoje.add(chave_macro)
                 stats["macros_novas"] += 1
 
         if rows_macros and not dry_run:
             cur_w.executemany(
                 "INSERT INTO tabela_macros"
-                " (cliente_id, distribuidora_id, resposta_id, status, data_criacao)"
-                " VALUES (%s, %s, %s, 'pendente', %s)",
+                " (cliente_id, distribuidora_id, cliente_uc_id, resposta_id, status, data_criacao)"
+                " VALUES (%s, %s, %s, %s, 'pendente', %s)",
                 rows_macros,
             )
 

@@ -176,10 +176,12 @@ def processar_arquivo(conn, filepath: Path, dry_run: bool) -> dict:
         tel_raw = primeiro_telefone(row, df_cols)
         endereco_raw = str(row.get("endereco", "") or "").strip()[:255] or None
 
+        norm_uc_val = normalizar_uc(row.get("uc"))
+
         # Validação
         if norm_cpf_val is None:
             vstatus, vmsg = "invalid", "CPF invalido ou ausente"
-        elif normalizar_uc(row.get("uc")) is None:
+        elif norm_uc_val is None:
             vstatus, vmsg = "invalid", "UC ausente ou invalida"
         elif distrib_id is None:
             vstatus, vmsg = "invalid", "Distribuidora nao identificada"
@@ -194,15 +196,16 @@ def processar_arquivo(conn, filepath: Path, dry_run: bool) -> dict:
             staging_id, int(idx),
             str(cpf_raw)[:50] if cpf_raw else None,
             nome, tel_raw, endereco_raw,
-            norm_cpf_val, vstatus, vmsg,
+            norm_cpf_val, norm_uc_val, vstatus, vmsg,
         ))
 
         if len(buf) >= 500 and not dry_run:
             cur.executemany(
                 """INSERT INTO staging_import_rows
                    (staging_id, row_idx, raw_cpf, raw_nome, raw_telefone,
-                    raw_endereco, normalized_cpf, validation_status, validation_message)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                    raw_endereco, normalized_cpf, normalized_uc,
+                    validation_status, validation_message)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                 buf,
             )
             conn.commit()
@@ -212,8 +215,9 @@ def processar_arquivo(conn, filepath: Path, dry_run: bool) -> dict:
         cur.executemany(
             """INSERT INTO staging_import_rows
                (staging_id, row_idx, raw_cpf, raw_nome, raw_telefone,
-                raw_endereco, normalized_cpf, validation_status, validation_message)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                raw_endereco, normalized_cpf, normalized_uc,
+                validation_status, validation_message)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
             buf,
         )
         conn.commit()
