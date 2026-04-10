@@ -8,15 +8,22 @@ Responsabilidade:
   2. Cruza com lote_meta.json para obter o macro_id de cada linha.
   3. Chama interpretar_resposta() para mapear a resposta bruta em
      (resposta_id, novo_status).
-  4. Atualiza tabela_macros com o resultado.
+  4. Insere UM NOVO REGISTRO em tabela_macros com o resultado.
+     O registro original (pendente → processando) é revertido para 'pendente',
+     preservando o histórico de quando a combinação CPF+UC foi enfileirada.
   5. Registros que ficaram em 'processando' mas não aparecem no resultado
      (macro parou no meio) são devolvidos para 'reprocessar' automaticamente.
   6. Arquiva os arquivos de lote com timestamp para auditoria.
 
 Fluxo do status por registro:
-  pendente     → processando  (feito pelo passo 03)
-  processando  → consolidado  | reprocessar | excluido  (feito aqui)
-  processando  → reprocessar  (registros sem resultado — recuperação)
+  pendente     → processando   (feito pelo passo 03)
+  processando  → INSERT novo registro (consolidado | reprocessar | excluido)
+               + original revertido para pendente  (feito aqui)
+  processando  → pendente  (registros sem resultado — recuperação)
+
+Modelo de histórico:
+  Cada processamento cria UM NOVO registro com o resultado.
+  O registro original (pendente) é preservado, representando o dia do upload.
 
 Chamado por:
   macro/macro/executar_automatico.py  (após consulta_contrato.py terminar)
@@ -53,43 +60,64 @@ ARQUIVO_DIR   = ROOT / "macro" / "dados" / "arquivo"
 BATCH = 500
 SEP = "=" * 70
 
-SQL_UPDATE_MACRO = """
-UPDATE tabela_macros
-SET status       = %s,
-    resposta_id  = %s,
-    data_extracao = NOW(),
-    data_update  = NOW()
-WHERE id = %s
-  AND status = 'processando'
+# Cria UM NOVO REGISTRO com o resultado da macro.
+# O registro original (macro_id, que estava em 'processando') é revertido
+# para 'pendente', preservando o histórico de quando foi enfileirado.
+SQL_INSERT_RESULTADO = """
+    INSERT INTO tabela_macros
+        (cliente_id, distribuidora_id, cliente_uc_id,
+         resposta_id, status, extraido,
+         qtd_faturas, valor_debito, valor_credito,
+         data_inic_parc, qtd_parcelas, valor_parcelas,
+         data_criacao, data_extracao, data_update)
+    SELECT
+        cliente_id, distribuidora_id, cliente_uc_id,
+        %s, %s, 0,
+        qtd_faturas, valor_debito, valor_credito,
+        data_inic_parc, qtd_parcelas, valor_parcelas,
+        NOW(), NOW(), NOW()
+    FROM tabela_macros
+    WHERE id = %s AND status = 'processando'
 """
 
-# Devolve para 'pendente' registros que ficaram presos em 'processando'
-# (macro abortou antes de processar — sem resposta recebida, volta para a fila)
+# Reverte o registro original de volta para pendente após inserir o resultado.
+SQL_REVERT_PARA_PENDENTE = """
+    UPDATE tabela_macros
+    SET status      = 'pendente',
+        resposta_id = 6,
+        data_extracao = NULL,
+        data_update = NOW()
+    WHERE id = %s
+"""
+
+# Registros que ficaram presos em 'processando' sem resultado:voltam a pendente.
 SQL_RECUPERAR_PROCESSANDO = """
 UPDATE tabela_macros
 SET status      = 'pendente',
-    resposta_id = NULL,
+    resposta_id = 6,
+    data_extracao = NULL,
     data_update = NOW()
 WHERE id IN ({placeholders})
   AND status = 'processando'
 """
 
-# Limpeza global: registros 'processando' que não estão no lote atual
-# (órfãos de ciclos anteriores interrompidos — sem resposta recebida, volta para a fila)
+# Limpeza global: registros 'processando' fora do lote atual → pendente.
 SQL_LIMPAR_ORFAOS = """
 UPDATE tabela_macros
 SET status      = 'pendente',
-    resposta_id = NULL,
+    resposta_id = 6,
+    data_extracao = NULL,
     data_update = NOW()
 WHERE status = 'processando'
   AND id NOT IN ({placeholders})
 """
 
-# Sem resposta recebida → volta para a fila como pendente
+# Sem lote ativo: todos os processando → pendente.
 SQL_LIMPAR_TODOS_ORFAOS = """
 UPDATE tabela_macros
 SET status      = 'pendente',
-    resposta_id = NULL,
+    resposta_id = 6,
+    data_extracao = NULL,
     data_update = NOW()
 WHERE status = 'processando'
 """
@@ -206,12 +234,13 @@ def processar(conn, df_resultado: pd.DataFrame, meta: dict, dry_run: bool) -> di
         pendentes_update.append((novo_status, resposta_id, macro_id))
         ids_processados.add(macro_id)
 
-    # ── Executar updates em lotes ───────────────────────────────────────────
+    # ── Inserir resultados (novo registro) + reverter originais ────────────
     if not dry_run:
         for i in range(0, len(pendentes_update), BATCH):
-            lote = pendentes_update[i:i + BATCH]
-            for args in lote:
-                cur.execute(SQL_UPDATE_MACRO, args)
+            lote = pendentes_update[i:i + BATCH]  # (novo_status, resposta_id, macro_id)
+            for novo_status, resposta_id, macro_id in lote:
+                cur.execute(SQL_INSERT_RESULTADO, (resposta_id, novo_status, macro_id))
+                cur.execute(SQL_REVERT_PARA_PENDENTE, (macro_id,))
             conn.commit()
 
     # Recuperação: registros do lote sem resultado (macro parou no meio)
@@ -225,7 +254,7 @@ def processar(conn, df_resultado: pd.DataFrame, meta: dict, dry_run: bool) -> di
                 list(ids_sem_resultado),
             )
             conn.commit()
-            print(f"  [OK] {cur.rowcount:,} registros devolvidos para 'reprocessar' (macro interrompida)")
+            print(f"  [OK] {cur.rowcount:,} registros devolvidos para 'pendente' (macro interrompida)")
 
     # Limpeza global: órfãos de ciclos anteriores (dry-run, crash, etc.)
     if not dry_run:
@@ -235,7 +264,7 @@ def processar(conn, df_resultado: pd.DataFrame, meta: dict, dry_run: bool) -> di
         else:
             cur.execute(SQL_LIMPAR_TODOS_ORFAOS)
         if cur.rowcount:
-            print(f"  [OK] {cur.rowcount:,} registros 'processando' órfãos (ciclos anteriores) → 'reprocessar'")
+            print(f"  [OK] {cur.rowcount:,} registros 'processando' órfãos (ciclos anteriores) → 'pendente'")
         conn.commit()
 
     cur.close()
@@ -302,7 +331,7 @@ def main():
         }
         for k, label in labels.items():
             print(f"  {label}: {stats.get(k, 0):>8,}")
-        print("  (*) registros em 'processando' sem resultado — devolvidos p/ reprocessar")
+        print("  (*) registros em 'processando' sem resultado — revertidos para 'pendente'")
 
         arquivar(args.dry_run)
 
