@@ -144,7 +144,30 @@ def invalidar_cache(tipo: str = None):
 # SQL para estatísticas por arquivo de staging (não usa cache — sempre atualizado)
 # Conta combinações CPF+UC distintas do arquivo e quantas já têm registro
 # em tabela_macros via cliente_uc_id (vínculo exato) ou fallback por CPF+distribuidora.
+# IMPORTANTE: com o modelo de INSERT por ciclo, uma mesma UC pode ter vários registros
+# não-pendentes. Usamos ROW_NUMBER() para considerar apenas o ÚLTIMO registro
+# rodado por UC (maior id), evitando dupla contagem de ativos/inativos.
 _SQL_STATS_ARQUIVO = """
+    WITH latest_macros AS (
+        SELECT id, cliente_uc_id, cliente_id, distribuidora_id, status
+        FROM (
+            SELECT
+                id, cliente_uc_id, cliente_id, distribuidora_id, status,
+                ROW_NUMBER() OVER (
+                    PARTITION BY
+                        CASE
+                            WHEN cliente_uc_id IS NOT NULL
+                                THEN CONCAT('uc_', cliente_uc_id)
+                            ELSE CONCAT('cli_', cliente_id, '_', distribuidora_id)
+                        END
+                    ORDER BY id DESC
+                ) AS rn
+            FROM tabela_macros
+            WHERE status != 'pendente'
+              AND resposta_id IS NOT NULL
+        ) ranked
+        WHERE rn = 1
+    )
     SELECT
         si.filename                                                          AS arquivo,
         DATE(si.created_at)                                                  AS data_carga,
@@ -169,18 +192,16 @@ _SQL_STATS_ARQUIVO = """
         ON cl.cpf = sir.normalized_cpf
     -- Caso 1: normalized_uc preenchida → resolve via cliente_uc (vínculo exato)
     LEFT JOIN cliente_uc cu
-        ON cu.cliente_id     = cl.id
-       AND cu.uc             = sir.normalized_uc
+        ON cu.cliente_id      = cl.id
+       AND cu.uc              = sir.normalized_uc
        AND cu.distribuidora_id = CAST(si.distribuidora_nome AS UNSIGNED)
-    -- tabela_macros: prefere vínculo por cliente_uc_id; fallback por cliente_id+distribuidora
-    LEFT JOIN tabela_macros m
+    -- Junta apenas o último registro rodado por UC (via CTE latest_macros)
+    LEFT JOIN latest_macros m
         ON (
               (cu.id IS NOT NULL AND m.cliente_uc_id = cu.id)
            OR (cu.id IS NULL     AND m.cliente_id = cl.id
                                   AND m.distribuidora_id = CAST(si.distribuidora_nome AS UNSIGNED))
            )
-       AND m.status       != 'pendente'
-       AND m.resposta_id  IS NOT NULL
     GROUP BY si.id, si.filename, DATE(si.created_at)
     ORDER BY si.id DESC
     LIMIT 15
