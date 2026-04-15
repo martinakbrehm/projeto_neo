@@ -29,8 +29,6 @@ def build_dashboard_data(resumo_sel, filtro_empresa,
     - filtro_fornecedor: 'fornecedor2' | 'contatus' | None (todos)
     - filtro_arquivo   : list de strings de arquivo_origem ou vazio
     """
-    # Forçar recarga dos dados para ter dados atualizados
-    loader.invalidar_cache(tipo_macro)
     df = loader.carregar_dados(tipo_macro)
 
     if df is None or df.empty:
@@ -71,22 +69,24 @@ def build_dashboard_data(resumo_sel, filtro_empresa,
 
     # ---------------------------------------------------------------
     # Distribuição de mensagens
+    # Usa coluna 'qtd' (pré-agregada no SQL) para somar contagens.
     # ---------------------------------------------------------------
     data_mensagens = []
     if "mensagem" in dff.columns:
-        cnt = (
-            dff.loc[
-                dff["resposta_status"].notna() &
-                ~dff["resposta_status"].isin(["pendente"]) &
-                dff["mensagem"].notna(),
-                "mensagem"
-            ]
-            .astype(str)
-            .str.strip()
-            .value_counts()
-            .reset_index()
+        mask_msg = (
+            dff["resposta_status"].notna() &
+            ~dff["resposta_status"].isin(["pendente"]) &
+            dff["mensagem"].notna()
         )
-        cnt.columns = ["mensagem", "quantidade"]
+        cnt = (
+            dff.loc[mask_msg, ["mensagem", "qtd"]]
+            .assign(mensagem=lambda df: df["mensagem"].astype(str).str.strip())
+            .groupby("mensagem")["qtd"]
+            .sum()
+            .reset_index()
+            .rename(columns={"qtd": "quantidade"})
+            .sort_values("quantidade", ascending=False)
+        )
         data_mensagens = cnt.to_dict("records")
 
     # ---------------------------------------------------------------
@@ -97,13 +97,14 @@ def build_dashboard_data(resumo_sel, filtro_empresa,
 
     # ---------------------------------------------------------------
     # Tabela Resumo diário
+    # Usa 'qtd' para somar — cada linha do df é um grupo pré-agregado.
     # ---------------------------------------------------------------
     data_resumo = []
     if "dia" in dff.columns:
-        g = dff.groupby(dff["dia"].astype(str))
-        total_s   = g.size()
-        ativo_s   = mask_ativo.groupby(dff["dia"].astype(str)).sum()
-        inativo_s = mask_inativo.groupby(dff["dia"].astype(str)).sum()
+        dia_str = dff["dia"].astype(str)
+        total_s   = dff.groupby(dia_str)["qtd"].sum()
+        ativo_s   = dff[mask_ativo].groupby(dff[mask_ativo]["dia"].astype(str))["qtd"].sum()
+        inativo_s = dff[mask_inativo].groupby(dff[mask_inativo]["dia"].astype(str))["qtd"].sum()
 
         resumo = pd.DataFrame({
             "dia":      total_s.index,

@@ -210,15 +210,18 @@ class PainelMacro:
             self._log_append("Valores de configuração inválidos.\n", "erro")
             return
 
-        if not VENV_PY.exists():
-            self._log_append(f"Venv não encontrado: {VENV_PY}\n", "erro")
+        if not VENV_PY.exists() and not _sys_python:
+            self._log_append(f"Python nao encontrado: {VENV_PY}\n", "erro")
             return
         if not SCRIPT.exists():
-            self._log_append(f"Script não encontrado: {SCRIPT}\n", "erro")
+            self._log_append(f"Script nao encontrado: {SCRIPT}\n", "erro")
             return
 
+        # Usa o Python do sistema (aprovado pelo AppLocker) em vez do venv,
+        # pois o AppLocker bloqueia DLLs do numpy dentro do venv.
+        python_exe = str(VENV_PY) if VENV_PY.exists() else _sys_python
         cmd = [
-            str(VENV_PY), "-u", str(SCRIPT),
+            python_exe, "-u", str(SCRIPT),
             "--continuar",
             "--tamanho", str(tamanho),
             "--pausa",   str(pausa),

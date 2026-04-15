@@ -212,7 +212,12 @@ def processar_staging(conn, staging_id: int, dry_run: bool) -> dict:
         cur.close()
         return {}
 
-    filepath = Path(row[0])
+    _fp = Path(row[0])
+    if _fp.is_absolute():
+        filepath = _fp
+    else:
+        # filename salvo no formato curto "DD-MM-YYYY/arquivo.csv"
+        filepath = ROOT / "dados" / "fornecedor2" / "operacional" / _fp
     distrib_id_meta = int(row[1]) if row[1] else None
 
     # Índices válidos ainda não processados → {row_idx: normalized_cpf}

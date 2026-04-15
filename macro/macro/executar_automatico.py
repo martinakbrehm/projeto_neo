@@ -377,8 +377,11 @@ def run_python_script():
     """
     try:
         print(" Executando macro (consulta_contrato.py)...")
+        # Usa ETL_PYTHON_EXE (Python do sistema) em vez do venv, pois o
+        # AppLocker bloqueia as DLLs do numpy dentro do venv.
+        # O Python do sistema já tem httpx, pandas e numpy aprovados.
         cmd = [
-            str(PYTHON_EXE),
+            str(ETL_PYTHON_EXE),
             "-u",            # unbuffered — output aparece em tempo real no painel
             str(PYTHON_SCRIPT),
             "--arquivo", str(LOTE_CSV),
@@ -426,10 +429,12 @@ def run_etl_buscar_lote(tamanho: int = 2000, dry_run: bool = False) -> bool:
         if dry_run:
             cmd.append("--dry-run")
         # Usa o Python do sistema (tem pymysql/pandas e é aprovado pelo AppLocker)
+        env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
         result = subprocess.run(
             cmd,
             cwd=str(PROJETO_DIR),
             capture_output=False,
+            env=env,
         )
         if result.returncode == 0:
             if LOTE_CSV.exists():
@@ -460,10 +465,12 @@ def run_etl_processar_retorno() -> bool:
         print("   A macro pode ter falhado antes de gerar saída.")
         return False
     try:
+        env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
         result = subprocess.run(
             [str(ETL_PYTHON_EXE), str(ETL_RETORNO)],
             cwd=str(PROJETO_DIR),
             capture_output=False,
+            env=env,
         )
         ok = result.returncode == 0
         if ok:
@@ -514,6 +521,9 @@ def _executar_um_ciclo(tamanho: int) -> str:
 
     if not testar_api():
         print("[AVISO] API não respondeu no teste  -  tentando mesmo assim...")
+
+    # Aguarda estabilização do túnel antes de iniciar a macro
+    time.sleep(2)
 
     # ------------------------------------------------------------------
     # PASSO 2b  -  Macro: consulta de titularidade via API

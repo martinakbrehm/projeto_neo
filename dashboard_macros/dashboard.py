@@ -1,5 +1,6 @@
 import sys
 import os
+import pandas as pd
 sys.path.insert(0, os.path.dirname(__file__))
 
 import dash
@@ -30,47 +31,21 @@ external_stylesheets = [
 app = dash.Dash(__name__, external_stylesheets=external_stylesheets)
 app.title = "Dashboard de aproveitamento das macros"
 
-# Autenticação básica usando Flask
-from flask import request, Response
-import base64
-
-VALID_CREDENTIALS = base64.b64encode(b'neo:dashboard2026').decode('utf-8')
-
-def auth_required(f):
-    def wrapper(*args, **kwargs):
-        auth = request.headers.get('Authorization')
-        if not auth or not auth.startswith('Basic '):
-            return Response('Login Required', 401, {'WWW-Authenticate': 'Basic realm="Login Required"'})
-        
-        try:
-            provided_credentials = auth.split(' ')[1]
-            if provided_credentials != VALID_CREDENTIALS:
-                return Response('Invalid Credentials', 401, {'WWW-Authenticate': 'Basic realm="Login Required"'})
-        except:
-            return Response('Invalid Credentials', 401, {'WWW-Authenticate': 'Basic realm="Login Required"'})
-        
-        return f(*args, **kwargs)
-    wrapper.__name__ = f.__name__
-    return wrapper
-
-# Aplicar autenticação na rota principal
-@app.server.route('/')
-@auth_required
-def index():
-    return app.index()
-
-# Sobrescrever a view function padrão
-app.server.view_functions['index'] = index
+# Autenticação básica para todo o app
+auth = dash_auth.BasicAuth(
+    app,
+    {'neo': 'dashboard2026'}
+)
 
 TITLE_STYLE         = {"fontFamily": "Roboto", "color": "#1a237e", "fontWeight": "700", "fontSize": "22px"}
 SECTION_TITLE_STYLE = {"fontFamily": "Roboto", "color": "#3949ab", "fontWeight": "700", "fontSize": "18px"}
 SUBTITLE_STYLE      = {"fontFamily": "Roboto", "color": "#283593", "fontWeight": "700", "fontSize": "16px"}
 
 loader.invalidar_cache("macro")
-_df_inicial             = loader.carregar_dados("macro")
-_opcoes_dia_inicial     = sorted(_df_inicial["dia"].dropna().unique()) if not _df_inicial.empty else []
-_opcoes_empresa_inicial = sorted(_df_inicial["empresa"].dropna().unique()) if not _df_inicial.empty and "empresa" in _df_inicial.columns else []
-_opcoes_arquivo_inicial = sorted(_df_inicial["arquivo_origem"].dropna().unique()) if not _df_inicial.empty and "arquivo_origem" in _df_inicial.columns else []
+_df_inicial             = pd.DataFrame()  # Não carregar dados iniciais para performance
+_opcoes_dia_inicial     = []
+_opcoes_empresa_inicial = []
+_opcoes_arquivo_inicial = []
 
 
 @app.server.before_request
@@ -303,8 +278,7 @@ app.layout = html.Div([
 def atualizar_opcoes_filtros(tipo_macro, fornecedor):
     tipo = tipo_macro or "macro"
     filtro_forn = fornecedor if fornecedor and fornecedor != "todos" else None
-    # Forçar recarga dos dados
-    loader.invalidar_cache(tipo)
+    # Usar dados em cache para performance
     df = loader.carregar_dados(tipo)
     if df.empty:
         return [], None, [], None, [], None, f"Sem dados para {tipo.upper()}"

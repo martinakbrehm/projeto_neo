@@ -140,11 +140,11 @@ def buscar_lote(conn, tamanho: int, dry_run: bool) -> pd.DataFrame:
     if _tabela_existe(conn, "cliente_origem"):
         sql = SQL_BUSCAR_LOTE_COM_ORIGEM
     else:
-        print("  [AVISO] Tabela cliente_origem não encontrada — usando fallback (tudo como fornecedor2).")
-        print("          Execute db/improvements/20260406_cliente_origem_views_fornecedor/migration.py para ativar priorização por fornecedor.")
+        print("  [AVISO] Tabela cliente_origem nao encontrada -- usando fallback (tudo como fornecedor2).")
+        print("          Execute db/improvements/20260406_cliente_origem_views_fornecedor/migration.py para ativar priorizacao por fornecedor.")
         sql = SQL_BUSCAR_LOTE_SEM_ORIGEM
 
-    print(f"  Consultando lote de até {tamanho:,} registros...")
+    print(f"  Consultando lote de ate {tamanho:,} registros...")
     cur.execute(sql, (tamanho,))
     rows = cur.fetchall()
 
@@ -187,7 +187,7 @@ def exportar_csv(df: pd.DataFrame, dry_run: bool):
         return
 
     df_macro.to_csv(LOTE_CSV, index=False, encoding="utf-8")
-    print(f"\n  [OK] CSV exportado → {LOTE_CSV}")
+    print(f"\n  [OK] CSV exportado -> {LOTE_CSV}")
     print(f"       {len(df_macro):,} linhas")
 
 
@@ -208,7 +208,7 @@ def salvar_meta(df: pd.DataFrame, dry_run: bool):
     LOTE_META.parent.mkdir(parents=True, exist_ok=True)
     with open(LOTE_META, "w", encoding="utf-8") as f:
         json.dump(meta, f, ensure_ascii=False, indent=2)
-    print(f"  [OK] Meta salvo → {LOTE_META}")
+    print(f"  [OK] Meta salvo -> {LOTE_META}")
 
 
 def main():
@@ -222,23 +222,23 @@ def main():
     args = parser.parse_args()
 
     print(SEP)
-    print(f"PASSO 03  —  Buscar lote macro  |  tamanho={args.tamanho:,}")
+    print(f"PASSO 03  --  Buscar lote macro  |  tamanho={args.tamanho:,}")
     if args.dry_run:
-        print("  [DRY-RUN] nenhuma alteração será gravada")
+        print("  [DRY-RUN] nenhuma alteracao sera gravada")
     print(SEP)
 
     conn = pymysql.connect(**DB_CONFIG)
     try:
         df = buscar_lote(conn, args.tamanho, args.dry_run)
         if df.empty:
-            print("\n[INFO] Lote vazio — macro não será executada.")
+            print("\n[INFO] Lote vazio -- macro nao sera executada.")
             sys.exit(0)
 
         exportar_csv(df, args.dry_run)
         salvar_meta(df, args.dry_run)
 
         print(f"\n{SEP}")
-        print("PASSO 03 CONCLUÍDO — lote pronto para a macro")
+        print("PASSO 03 CONCLUIDO -- lote pronto para a macro")
         print(SEP)
 
     finally:

@@ -448,43 +448,53 @@ class ConsultaContratoAsync:
             return self.testar_api_real()
 
     def testar_api_real(self):
-        """Testa se a API está respondendo"""
+        """Testa se a API está respondendo (com retry)"""
         print("🧪 Testando conectividade com a API...")
         
-        try:
-            url_teste = "http://localhost:5000/validacaotitularidade/Validacao/ValidarTitularidade?ContaContrato=123456789&CpfCnpj=12345678901&Empresa=coelba"
-            
-            # ⚡ CORREÇÃO: Timeout configurado corretamente
-            timeout_config = httpx.Timeout(
-                connect=3.0,
-                read=5.0,
-                write=3.0,
-                pool=3.0
-            )
-            
-            with httpx.Client(timeout=timeout_config) as client:
-                response = client.get(url_teste)
+        url_teste = "http://localhost:5000/validacaotitularidade/Validacao/ValidarTitularidade?ContaContrato=123456789&CpfCnpj=12345678901&Empresa=coelba"
+        max_tentativas = 3
+
+        for tentativa in range(1, max_tentativas + 1):
+            try:
+                timeout_config = httpx.Timeout(
+                    connect=5.0,
+                    read=8.0,
+                    write=3.0,
+                    pool=3.0
+                )
                 
-                print(f"📊 Status HTTP: {response.status_code}")
-                print(f"🔍 URL de teste: {url_teste}")
-                print(f"📄 Resposta de teste: {response.text[:200]}...")  # Mostra resposta
-                
-                if response.status_code == 200:
-                    print("✅ API respondendo corretamente!")
+                with httpx.Client(timeout=timeout_config) as client:
+                    response = client.get(url_teste)
                     
-                    # 🔍 Verifica se a resposta contém dados válidos
-                    if "INATIVO" in response.text or "não existe" in response.text:
-                        print("⚠️ ATENÇÃO: API está retornando que os dados de teste não existem")
-                        print("💡 Isso é normal para dados fictícios. Verifique se os dados da planilha estão corretos.")
+                    print(f"📊 Status HTTP: {response.status_code}")
+                    print(f"🔍 URL de teste: {url_teste}")
+                    print(f"📄 Resposta de teste: {response.text[:200]}...")
                     
-                    return True
+                    if response.status_code == 200:
+                        print("✅ API respondendo corretamente!")
+                        
+                        if "INATIVO" in response.text or "não existe" in response.text:
+                            print("⚠️ ATENÇÃO: API está retornando que os dados de teste não existem")
+                            print("💡 Isso é normal para dados fictícios. Verifique se os dados da planilha estão corretos.")
+                        
+                        return True
+                    else:
+                        print(f"❌ API retornou status {response.status_code}")
+                        if tentativa < max_tentativas:
+                            print(f"🔄 Tentando novamente ({tentativa}/{max_tentativas})...")
+                            time.sleep(3)
+                            continue
+                        return False
+                        
+            except Exception as e:
+                print(f"❌ Erro ao testar API (tentativa {tentativa}/{max_tentativas}): {e}")
+                if tentativa < max_tentativas:
+                    print(f"🔄 Aguardando 3s antes de tentar novamente...")
+                    time.sleep(3)
                 else:
-                    print(f"❌ API retornou status {response.status_code}")
+                    print("❌ API não respondeu após todas as tentativas.")
                     return False
-                    
-        except Exception as e:
-            print(f"❌ Erro ao testar API: {e}")
-            return False
+        return False
 
     def selecionar_arquivo(self):
         """Seleciona o arquivo de entrada.

@@ -125,7 +125,7 @@ WHERE status = 'processando'
 
 def carregar_meta() -> dict:
     if not LOTE_META.exists():
-        print(f"  [ERRO] Arquivo de meta não encontrado: {LOTE_META}")
+        print(f"  [ERRO] Arquivo de meta nao encontrado: {LOTE_META}")
         sys.exit(1)
     with open(LOTE_META, encoding="utf-8") as f:
         return json.load(f)
@@ -133,8 +133,8 @@ def carregar_meta() -> dict:
 
 def carregar_resultado() -> pd.DataFrame:
     if not RESULTADO_CSV.exists():
-        print(f"  [ERRO] Arquivo de resultado não encontrado: {RESULTADO_CSV}")
-        print("         A macro não gerou saída ou falhou antes de concluir.")
+        print(f"  [ERRO] Arquivo de resultado nao encontrado: {RESULTADO_CSV}")
+        print("         A macro nao gerou saida ou falhou antes de concluir.")
         sys.exit(1)
     df = pd.read_csv(RESULTADO_CSV, dtype=str)
     df.columns = [c.strip().lower() for c in df.columns]
@@ -195,7 +195,7 @@ def processar(conn, df_resultado: pd.DataFrame, meta: dict, dry_run: bool) -> di
     )
 
     if not col_resposta:
-        print("  [ERRO] Coluna 'resposta' não encontrada no arquivo de resultado.")
+        print("  [ERRO] Coluna 'resposta' nao encontrada no arquivo de resultado.")
         sys.exit(1)
 
     # ── Agregar por macro_id ────────────────────────────────────────────────
@@ -264,7 +264,7 @@ def processar(conn, df_resultado: pd.DataFrame, meta: dict, dry_run: bool) -> di
         else:
             cur.execute(SQL_LIMPAR_TODOS_ORFAOS)
         if cur.rowcount:
-            print(f"  [OK] {cur.rowcount:,} registros 'processando' órfãos (ciclos anteriores) → 'pendente'")
+            print(f"  [OK] {cur.rowcount:,} registros 'processando' orfaos (ciclos anteriores) -> 'pendente'")
         conn.commit()
 
     cur.close()
@@ -303,9 +303,9 @@ def main():
     args = parser.parse_args()
 
     print(SEP)
-    print("PASSO 04  —  Processar retorno macro → banco")
+    print("PASSO 04  --  Processar retorno macro -> banco")
     if args.dry_run:
-        print("  [DRY-RUN] nenhuma alteração será gravada")
+        print("  [DRY-RUN] nenhuma alteracao sera gravada")
     print(SEP)
 
     meta = carregar_meta()
@@ -331,12 +331,20 @@ def main():
         }
         for k, label in labels.items():
             print(f"  {label}: {stats.get(k, 0):>8,}")
-        print("  (*) registros em 'processando' sem resultado — revertidos para 'pendente'")
+        print("  (*) registros em 'processando' sem resultado -- revertidos para 'pendente'")
 
         arquivar(args.dry_run)
 
+        if not args.dry_run:
+            print("\nAtualizando tabela materializada do dashboard...")
+            try:
+                from dashboard_macros.data.loader import refresh_dashboard_macros_agg
+                refresh_dashboard_macros_agg()
+            except Exception as e:
+                print(f"[AVISO] Falha ao atualizar tabela do dashboard: {e}")
+
         print(f"\n{SEP}")
-        print("PASSO 04 CONCLUÍDO")
+        print("PASSO 04 CONCLUIDO")
         print(SEP)
 
     finally:
