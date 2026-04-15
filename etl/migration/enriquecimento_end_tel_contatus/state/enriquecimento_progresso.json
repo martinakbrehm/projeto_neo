@@ -1,0 +1,11 @@
+{
+  "modo": "ambos",
+  "total": 65403,
+  "ultimo_idx": 65403,
+  "enderecos_inseridos": 39937,
+  "telefones_inseridos": 96582,
+  "cpfs_encontrados": 40667,
+  "cpfs_nao_encontrados": 24736,
+  "iniciado_em": "2026-04-15T16:36:00",
+  "atualizado_em": "2026-04-15T16:38:57"
+}

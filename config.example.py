@@ -46,3 +46,26 @@ def db_origem(**kwargs) -> dict:
         charset="utf8mb4",
         **kwargs,
     )
+
+
+# -----------------------------------------------------------------------------
+# Banco CONTATUS  –  bd_contatus (enriquecimento endereço/telefone)
+# -----------------------------------------------------------------------------
+DB_CONTATUS_HOST     = "seu-host.rds.amazonaws.com"
+DB_CONTATUS_PORT     = 3306
+DB_CONTATUS_USER     = "usuario"
+DB_CONTATUS_PASSWORD = "senha"
+DB_CONTATUS_DATABASE = "bd_contatus"
+
+
+def db_contatus(**kwargs) -> dict:
+    """Config do banco Contatus (bd_contatus)."""
+    return dict(
+        host=DB_CONTATUS_HOST,
+        port=DB_CONTATUS_PORT,
+        user=DB_CONTATUS_USER,
+        password=DB_CONTATUS_PASSWORD,
+        database=DB_CONTATUS_DATABASE,
+        charset="utf8mb4",
+        **kwargs,
+    )

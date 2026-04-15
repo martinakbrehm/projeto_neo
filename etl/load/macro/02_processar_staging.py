@@ -164,7 +164,14 @@ def colunas_telefone(df: pd.DataFrame) -> list[str]:
 # ---------------------------------------------------------------------------
 
 def conectar():
-    return pymysql.connect(**DB_CONFIG)
+    conn = pymysql.connect(**DB_CONFIG)
+    cur = conn.cursor()
+    cur.execute("SET SESSION wait_timeout = 28800")
+    cur.execute("SET SESSION interactive_timeout = 28800")
+    cur.execute("SET SESSION net_read_timeout = 600")
+    cur.execute("SET SESSION net_write_timeout = 600")
+    cur.close()
+    return conn
 
 
 def carregar_maps(cur) -> tuple[dict, dict, set, set, set]:

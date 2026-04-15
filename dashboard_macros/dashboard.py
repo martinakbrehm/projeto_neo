@@ -210,26 +210,31 @@ app.layout = html.Div([
         html.Div([
             html.H3("Resultados por arquivo carregado",
                     style={**SUBTITLE_STYLE, "marginTop": "0", "marginBottom": "6px"}),
+            html.Div([
+                html.Label("Visualizar:", style={"fontWeight": "700", "fontSize": "13px",
+                                                  "marginRight": "12px", "color": "#4a148c"}),
+                dcc.RadioItems(
+                    id="selector-view-arquivos",
+                    options=[
+                        {"label": "  Todos do arquivo", "value": "todos"},
+                        {"label": "  Apenas inéditos",  "value": "ineditos"},
+                    ],
+                    value="todos",
+                    inline=True,
+                    inputStyle={"marginRight": "6px", "cursor": "pointer"},
+                    labelStyle={"marginRight": "20px", "fontFamily": "Roboto", "fontSize": "14px",
+                                "fontWeight": "600", "cursor": "pointer"},
+                ),
+            ], style={"background": "#f3e5f5", "padding": "8px 14px", "borderRadius": "6px",
+                      "marginBottom": "8px", "display": "flex", "alignItems": "center",
+                      "boxShadow": "0 1px 4px rgba(74,20,140,0.08)"}),
             html.P(
-                "Últimos 15 arquivos importados: CPFs únicos enviados pelo fornecedor, "
-                "quantos foram processados pela macro naquela distribuidora "
-                "(ativo = consolidado / inativo = excluído ou reprocessar). "
-                "Pendentes = combinações CPF+UC do arquivo que ainda não rodaram.",
+                id="desc-tabela-arquivos",
                 style={"fontSize": "13px", "color": "#666", "marginBottom": "10px"}
             ),
             dash_table.DataTable(
                 id="tabela-arquivos",
-                columns=[
-                    {"name": "Arquivo",              "id": "arquivo"},
-                    {"name": "Data carga",            "id": "data_carga"},
-                    {"name": "CPF+UCs no arquivo",   "id": "cpfs_no_arquivo"},
-                    {"name": "Processados",           "id": "cpfs_processados"},
-                    {"name": "Pendentes",             "id": "cpfs_pendentes"},
-                    {"name": "Ativos",                "id": "ativos"},
-                    {"name": "% Ativos",              "id": "pct_ativos"},
-                    {"name": "Inativos",              "id": "inativos"},
-                    {"name": "% Inativos",            "id": "pct_inativos"},
-                ],
+                columns=[],  # Definido dinamicamente via callback
                 data=[],
                 style_table={"overflowX": "auto", "borderRadius": "8px",
                              "boxShadow": "0 2px 8px #e0e0e0", "marginTop": "4px"},
@@ -310,6 +315,8 @@ def atualizar_opcoes_filtros(tipo_macro, fornecedor):
         dash.dependencies.Output("tabela-resumo",    "data"),
         dash.dependencies.Output("tabela-mensagens", "data"),
         dash.dependencies.Output("tabela-arquivos",  "data"),
+        dash.dependencies.Output("tabela-arquivos",  "columns"),
+        dash.dependencies.Output("desc-tabela-arquivos", "children"),
     ],
     [
         dash.dependencies.Input("resumo-dia-dropdown",     "value"),
@@ -317,9 +324,10 @@ def atualizar_opcoes_filtros(tipo_macro, fornecedor):
         dash.dependencies.Input("filtro-arquivo-dropdown", "value"),
         dash.dependencies.Input("selector-tipo-macro",     "value"),
         dash.dependencies.Input("selector-fornecedor",     "value"),
+        dash.dependencies.Input("selector-view-arquivos",  "value"),
     ]
 )
-def atualizar_dashboard(resumo_sel, filtro_empresa, filtro_arquivo, tipo_macro, fornecedor):
+def atualizar_dashboard(resumo_sel, filtro_empresa, filtro_arquivo, tipo_macro, fornecedor, view_arquivos):
     tipo = tipo_macro or "macro"
     filtro_forn = fornecedor if fornecedor and fornecedor != "todos" else None
     try:
@@ -331,7 +339,45 @@ def atualizar_dashboard(resumo_sel, filtro_empresa, filtro_arquivo, tipo_macro, 
         data_resumo = []
         data_mensagens = []
         data_arquivos = []
-    return data_resumo, data_mensagens, data_arquivos
+
+    # Colunas e descrição dependem do modo selecionado
+    if view_arquivos == "ineditos":
+        cols_arquivos = [
+            {"name": "Arquivo",              "id": "arquivo"},
+            {"name": "Data carga",            "id": "data_carga"},
+            {"name": "CPFs inéditos",        "id": "cpfs_ineditos"},
+            {"name": "UCs inéditas",         "id": "ucs_ineditas"},
+            {"name": "Processados",           "id": "ineditos_processados"},
+            {"name": "Pendentes",             "id": "ineditos_pendentes"},
+            {"name": "Ativos",                "id": "ineditos_ativos"},
+            {"name": "% Ativos",              "id": "pct_ineditos_ativos"},
+            {"name": "Inativos",              "id": "ineditos_inativos"},
+            {"name": "% Inativos",            "id": "pct_ineditos_inativos"},
+        ]
+        desc = (
+            "Mostrando apenas CPFs INÉDITOS: que apareceram pela primeira vez "
+            "neste arquivo e nunca estiveram em nenhum arquivo anterior."
+        )
+    else:
+        cols_arquivos = [
+            {"name": "Arquivo",              "id": "arquivo"},
+            {"name": "Data carga",            "id": "data_carga"},
+            {"name": "CPF+UCs no arquivo",   "id": "cpfs_no_arquivo"},
+            {"name": "Processados",           "id": "cpfs_processados"},
+            {"name": "Pendentes",             "id": "cpfs_pendentes"},
+            {"name": "Ativos",                "id": "ativos"},
+            {"name": "% Ativos",              "id": "pct_ativos"},
+            {"name": "Inativos",              "id": "inativos"},
+            {"name": "% Inativos",            "id": "pct_inativos"},
+        ]
+        desc = (
+            "Últimos 15 arquivos importados: CPFs únicos enviados pelo fornecedor, "
+            "quantos foram processados pela macro naquela distribuidora "
+            "(ativo = consolidado / inativo = excluído ou reprocessar). "
+            "Pendentes = combinações CPF+UC do arquivo que ainda não rodaram."
+        )
+
+    return data_resumo, data_mensagens, data_arquivos, cols_arquivos, desc
 
 
 @app.server.route("/_debug/data")

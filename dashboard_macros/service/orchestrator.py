@@ -140,12 +140,25 @@ def build_dashboard_data(resumo_sel, filtro_empresa,
 
 
 def build_tabela_arquivos() -> list:
-    """Retorna lista de dicts com estatísticas dos últimos 15 arquivos de staging."""
+    """Retorna lista de dicts com estatísticas dos últimos 15 arquivos de staging.
+
+    Retorna todos os campos (gerais + inéditos). O dashboard alterna entre os
+    dois conjuntos de colunas via seletor.
+    """
     df = loader.carregar_stats_por_arquivo()
     if df is None or df.empty:
         return []
 
-    df["total_proc"] = df["ativos"].fillna(0).astype(int) + df["inativos"].fillna(0).astype(int)
+    int_cols = [
+        "cpfs_no_arquivo", "cpfs_processados", "ativos", "inativos",
+        "cpfs_ineditos", "ucs_ineditas",
+        "ineditos_processados", "ineditos_ativos", "ineditos_inativos",
+    ]
+    for col in int_cols:
+        df[col] = df[col].fillna(0).astype(int)
+
+    # Percentuais gerais
+    df["total_proc"] = df["ativos"] + df["inativos"]
     df["pct_ativos"] = df.apply(
         lambda r: f"{round(r['ativos'] / r['total_proc'] * 100, 1)}%" if r["total_proc"] > 0 else "-",
         axis=1,
@@ -154,14 +167,30 @@ def build_tabela_arquivos() -> list:
         lambda r: f"{round(r['inativos'] / r['total_proc'] * 100, 1)}%" if r["total_proc"] > 0 else "-",
         axis=1,
     )
-
-    for col in ["cpfs_no_arquivo", "cpfs_processados", "ativos", "inativos"]:
-        df[col] = df[col].fillna(0).astype(int)
-
     df["cpfs_pendentes"] = df["cpfs_no_arquivo"] - df["cpfs_processados"]
+
+    # Percentuais inéditos
+    df["ined_total_proc"] = df["ineditos_ativos"] + df["ineditos_inativos"]
+    df["pct_ineditos_ativos"] = df.apply(
+        lambda r: f"{round(r['ineditos_ativos'] / r['ined_total_proc'] * 100, 1)}%" if r["ined_total_proc"] > 0 else "-",
+        axis=1,
+    )
+    df["pct_ineditos_inativos"] = df.apply(
+        lambda r: f"{round(r['ineditos_inativos'] / r['ined_total_proc'] * 100, 1)}%" if r["ined_total_proc"] > 0 else "-",
+        axis=1,
+    )
+    df["ineditos_pendentes"] = df["cpfs_ineditos"] - df["ineditos_processados"]
+
     df["data_carga"] = df["data_carga"].astype(str)
 
     return df[[
-        "arquivo", "data_carga", "cpfs_no_arquivo",
-        "cpfs_processados", "ativos", "pct_ativos", "inativos", "pct_inativos", "cpfs_pendentes",
+        "arquivo", "data_carga",
+        # Geral
+        "cpfs_no_arquivo", "cpfs_processados", "cpfs_pendentes",
+        "ativos", "pct_ativos", "inativos", "pct_inativos",
+        # Inéditos
+        "cpfs_ineditos", "ucs_ineditas",
+        "ineditos_processados", "ineditos_pendentes",
+        "ineditos_ativos", "pct_ineditos_ativos",
+        "ineditos_inativos", "pct_ineditos_inativos",
     ]].to_dict("records")

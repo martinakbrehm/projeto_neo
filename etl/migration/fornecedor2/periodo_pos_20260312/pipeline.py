@@ -1,31 +1,79 @@
 """
-etl/migration/periodo_pos_20260312/pipeline.py
-==============================================
+etl/migration/fornecedor2/periodo_pos_20260312/pipeline.py
+==========================================================
 Pipeline de migracao historica — Periodo pos 12/03/2026.
 
-A construir. Definir steps conforme fluxo do segundo periodo.
+Dados de origem:
+    dados/fornecedor2/migration_periodo_pos_20260312/raw/
+        clientes_300k_25_03.csv              (300k registros de entrada)
+        saida_unica_dados_filtrados_sem_erros.xlsx  (293k resultados das macros)
+
+Steps:
+    1. 01_normalizar_historico.py   — Cruza CSV de entrada com Excel de saída,
+       mapeia status, gera CSV normalizado pronto para importação.
+    2. 02_importar_historico.py     — Importa para o banco: staging_imports,
+       staging_import_rows, clientes, cliente_uc, tabela_macros.
 
 Uso:
-    python etl/migration/periodo_pos_20260312/pipeline.py --list
-    python etl/migration/periodo_pos_20260312/pipeline.py --dry-run
-    python etl/migration/periodo_pos_20260312/pipeline.py
+    python etl/migration/fornecedor2/periodo_pos_20260312/pipeline.py
+    python etl/migration/fornecedor2/periodo_pos_20260312/pipeline.py --step 1
+    python etl/migration/fornecedor2/periodo_pos_20260312/pipeline.py --step 2
+    python etl/migration/fornecedor2/periodo_pos_20260312/pipeline.py --dry-run
 """
 
-# ---------------------------------------------------------------------------
-# TODO: definir steps do segundo periodo de migracao
-# ---------------------------------------------------------------------------
-# Importar o orquestrador base quando os scripts estiverem prontos:
-#
-#   from pathlib import Path
-#   import sys
-#   sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-#   from _base_pipeline import Step, run_pipeline, ...
-#
-# Steps previstos (ajustar conforme fluxo real):
-#   Step 1 - ...
-#   Step 2 - ...
-#   Step 3 - enriquecer_clientes (reaproveitar de periodo_ate_20260312)
-# ---------------------------------------------------------------------------
+import subprocess
+import sys
+import argparse
+from pathlib import Path
 
-print("Pipeline do periodo_pos_20260312 ainda nao implementado.")
-print("Defina os steps e scripts antes de executar.")
+SCRIPTS = [
+    ("01_normalizar_historico.py", "Normalizar CSV + Excel → CSV normalizado"),
+    ("02_importar_historico.py",   "Importar CSV normalizado → banco de dados"),
+]
+
+HERE = Path(__file__).resolve().parent
+
+
+def run_step(idx: int, dry_run: bool = False):
+    script, desc = SCRIPTS[idx]
+    path = HERE / script
+    print(f"\n{'='*60}")
+    print(f"STEP {idx+1}: {desc}")
+    print(f"  Script: {script}")
+    print(f"{'='*60}\n")
+
+    cmd = [sys.executable, str(path)]
+    if dry_run and idx == 1:
+        cmd.append("--dry-run")
+
+    result = subprocess.run(cmd, cwd=str(HERE.parents[3]))
+    if result.returncode != 0:
+        print(f"\n[ERRO] Step {idx+1} falhou (exit code {result.returncode})")
+        sys.exit(result.returncode)
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Pipeline migracao periodo pos 20260312")
+    parser.add_argument("--step", type=int, default=0, help="Executar step especifico (1 ou 2)")
+    parser.add_argument("--dry-run", action="store_true", help="Modo simulacao (step 2)")
+    parser.add_argument("--list", action="store_true", help="Listar steps")
+    args = parser.parse_args()
+
+    if args.list:
+        for i, (script, desc) in enumerate(SCRIPTS):
+            print(f"  Step {i+1}: {desc}  ({script})")
+        return
+
+    if args.step:
+        run_step(args.step - 1, args.dry_run)
+    else:
+        for i in range(len(SCRIPTS)):
+            run_step(i, args.dry_run)
+
+    print(f"\n{'='*60}")
+    print("Pipeline concluido.")
+    print(f"{'='*60}")
+
+
+if __name__ == "__main__":
+    main()

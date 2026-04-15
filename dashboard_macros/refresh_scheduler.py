@@ -30,7 +30,7 @@ from config import db_destino  # noqa: E402
 # Configuração
 # ---------------------------------------------------------------------------
 LOCK_FILE = Path(__file__).parent / ".refresh_scheduler.lock"
-DEFAULT_INTERVAL = 3600  # 1 hora em segundos
+DEFAULT_INTERVAL = 1200  # 20 minutos em segundos
 DB_CONFIG = db_destino()
 
 # Logging
@@ -218,11 +218,43 @@ def refresh_arquivos() -> bool:
             )
             conn.commit()
 
+            # Passo 2b: temp tables para CPFs/UCs inéditos (primeiro staging por CPF/UC)
+            cur.execute("DROP TEMPORARY TABLE IF EXISTS tmp_cpf_first")
+            cur.execute("""
+                CREATE TEMPORARY TABLE tmp_cpf_first (
+                    normalized_cpf   CHAR(11)     NOT NULL,
+                    first_staging_id INT UNSIGNED NOT NULL,
+                    INDEX (first_staging_id),
+                    INDEX (normalized_cpf)
+                )
+                SELECT normalized_cpf, MIN(staging_id) AS first_staging_id
+                FROM staging_import_rows
+                WHERE validation_status = 'valid'
+                GROUP BY normalized_cpf
+            """)
+            cur.execute("DROP TEMPORARY TABLE IF EXISTS tmp_uc_first")
+            cur.execute("""
+                CREATE TEMPORARY TABLE tmp_uc_first (
+                    normalized_cpf   CHAR(11)     NOT NULL,
+                    normalized_uc    CHAR(10)     NOT NULL,
+                    first_staging_id INT UNSIGNED NOT NULL,
+                    INDEX (first_staging_id)
+                )
+                SELECT normalized_cpf, normalized_uc, MIN(staging_id) AS first_staging_id
+                FROM staging_import_rows
+                WHERE validation_status = 'valid'
+                  AND normalized_uc IS NOT NULL
+                  AND normalized_uc != ''
+                GROUP BY normalized_cpf, normalized_uc
+            """)
+            conn.commit()
+
             # Passo 3: popular tabela final
             cur.execute("TRUNCATE TABLE dashboard_arquivos_agg")
             cur.execute("""
                 INSERT INTO dashboard_arquivos_agg
-                    (arquivo, data_carga, cpfs_no_arquivo, cpfs_processados, ativos, inativos)
+                    (arquivo, data_carga, cpfs_no_arquivo, cpfs_processados, ativos, inativos,
+                     cpfs_ineditos, ucs_ineditas, ineditos_processados, ineditos_ativos, ineditos_inativos)
                 SELECT
                     si.filename                                                                   AS arquivo,
                     DATE(si.created_at)                                                           AS data_carga,
@@ -231,7 +263,26 @@ def refresh_arquivos() -> bool:
                     COUNT(DISTINCT CASE WHEN cs.status = 'consolidado' THEN sir.normalized_cpf END) AS ativos,
                     COUNT(DISTINCT CASE
                         WHEN cs.status IN ('excluido', 'reprocessar') THEN sir.normalized_cpf
-                    END)                                                                          AS inativos
+                    END)                                                                          AS inativos,
+                    COUNT(DISTINCT CASE
+                        WHEN cf.first_staging_id = si.id THEN sir.normalized_cpf
+                    END)                                                                          AS cpfs_ineditos,
+                    COUNT(DISTINCT CASE
+                        WHEN uf.first_staging_id = si.id
+                        THEN CONCAT(sir.normalized_cpf, '|', sir.normalized_uc)
+                    END)                                                                          AS ucs_ineditas,
+                    COUNT(DISTINCT CASE
+                        WHEN cf.first_staging_id = si.id AND cs.status IS NOT NULL
+                        THEN sir.normalized_cpf
+                    END)                                                                          AS ineditos_processados,
+                    COUNT(DISTINCT CASE
+                        WHEN cf.first_staging_id = si.id AND cs.status = 'consolidado'
+                        THEN sir.normalized_cpf
+                    END)                                                                          AS ineditos_ativos,
+                    COUNT(DISTINCT CASE
+                        WHEN cf.first_staging_id = si.id AND cs.status IN ('excluido', 'reprocessar')
+                        THEN sir.normalized_cpf
+                    END)                                                                          AS ineditos_inativos
                 FROM staging_imports si
                 JOIN staging_import_rows sir
                     ON  sir.staging_id        = si.id
@@ -239,6 +290,11 @@ def refresh_arquivos() -> bool:
                 LEFT JOIN tmp_cpf_status cs
                     ON  cs.cpf              = sir.normalized_cpf
                     AND cs.distribuidora_id = CAST(si.distribuidora_nome AS UNSIGNED)
+                LEFT JOIN tmp_cpf_first cf
+                    ON cf.normalized_cpf = sir.normalized_cpf
+                LEFT JOIN tmp_uc_first uf
+                    ON  uf.normalized_cpf = sir.normalized_cpf
+                    AND uf.normalized_uc  = sir.normalized_uc
                 GROUP BY si.id, si.filename, DATE(si.created_at)
                 ORDER BY si.id DESC
             """)
@@ -246,6 +302,8 @@ def refresh_arquivos() -> bool:
             conn.commit()
 
             cur.execute("DROP TEMPORARY TABLE IF EXISTS tmp_cpf_status")
+            cur.execute("DROP TEMPORARY TABLE IF EXISTS tmp_cpf_first")
+            cur.execute("DROP TEMPORARY TABLE IF EXISTS tmp_uc_first")
 
         conn.close()
         elapsed = time.time() - t0
