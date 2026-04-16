@@ -32,7 +32,7 @@ def build_dashboard_data(resumo_sel, filtro_empresa,
     df = loader.carregar_dados(tipo_macro)
 
     if df is None or df.empty:
-        return [], []
+        return [], [], build_tabela_arquivos()
 
     dff = df.copy()
 
@@ -65,7 +65,7 @@ def build_dashboard_data(resumo_sel, filtro_empresa,
             pass
 
     if dff.empty:
-        return [], []
+        return [], [], build_tabela_arquivos()
 
     # ---------------------------------------------------------------
     # Distribuição de mensagens
@@ -169,6 +169,26 @@ def build_tabela_arquivos() -> list:
     )
     df["cpfs_pendentes"] = df["cpfs_no_arquivo"] - df["cpfs_processados"]
 
+    # Novos vs. já existentes no banco
+    df["cpfs_ja_existentes"] = (df["cpfs_no_arquivo"] - df["cpfs_ineditos"]).clip(lower=0)
+    df["ucs_ja_existentes"]  = (df["cpfs_no_arquivo"] - df["ucs_ineditas"]).clip(lower=0)
+    df["pct_ineditos_cpf"] = df.apply(
+        lambda r: f"{round(r['cpfs_ineditos'] / r['cpfs_no_arquivo'] * 100, 1)}%" if r["cpfs_no_arquivo"] > 0 else "-",
+        axis=1,
+    )
+    df["pct_existentes_cpf"] = df.apply(
+        lambda r: f"{round(r['cpfs_ja_existentes'] / r['cpfs_no_arquivo'] * 100, 1)}%" if r["cpfs_no_arquivo"] > 0 else "-",
+        axis=1,
+    )
+    df["pct_ineditos_uc"] = df.apply(
+        lambda r: f"{round(r['ucs_ineditas'] / r['cpfs_no_arquivo'] * 100, 1)}%" if r["cpfs_no_arquivo"] > 0 else "-",
+        axis=1,
+    )
+    df["pct_existentes_uc"] = df.apply(
+        lambda r: f"{round(r['ucs_ja_existentes'] / r['cpfs_no_arquivo'] * 100, 1)}%" if r["cpfs_no_arquivo"] > 0 else "-",
+        axis=1,
+    )
+
     # Percentuais inéditos
     df["ined_total_proc"] = df["ineditos_ativos"] + df["ineditos_inativos"]
     df["pct_ineditos_ativos"] = df.apply(
@@ -193,4 +213,39 @@ def build_tabela_arquivos() -> list:
         "ineditos_processados", "ineditos_pendentes",
         "ineditos_ativos", "pct_ineditos_ativos",
         "ineditos_inativos", "pct_ineditos_inativos",
+        # Novos vs existentes
+        "cpfs_ja_existentes", "ucs_ja_existentes",
+        "pct_ineditos_cpf", "pct_existentes_cpf",
+        "pct_ineditos_uc", "pct_existentes_uc",
+    ]].to_dict("records")
+
+
+def build_tabela_cobertura() -> list:
+    """Retorna cobertura por arquivo contando combinações únicas de CPF+UC.
+
+    Regra: a unidade de contagem é o par (CPF, UC). Um mesmo CPF com UCs
+    diferentes gera combinações distintas. Linhas sem UC são excluídas.
+    Combinação 'nova' = aparece pela 1ª vez considerando todos os arquivos;
+    combinação 'existente' = já estava presente em arquivo anterior.
+    """
+    df = loader.carregar_cobertura()
+    if df is None or df.empty:
+        return []
+
+    for col in ["total_combos", "combos_novas", "combos_existentes"]:
+        df[col] = df[col].fillna(0).astype(int)
+
+    df["pct_novas"] = df.apply(
+        lambda r: f"{round(r['combos_novas'] / r['total_combos'] * 100, 1)}%"
+        if r["total_combos"] > 0 else "-", axis=1)
+    df["pct_existentes"] = df.apply(
+        lambda r: f"{round(r['combos_existentes'] / r['total_combos'] * 100, 1)}%"
+        if r["total_combos"] > 0 else "-", axis=1)
+
+    df["data_carga"] = df["data_carga"].astype(str)
+
+    return df[[
+        "arquivo", "data_carga",
+        "total_combos", "combos_novas", "pct_novas",
+        "combos_existentes", "pct_existentes",
     ]].to_dict("records")

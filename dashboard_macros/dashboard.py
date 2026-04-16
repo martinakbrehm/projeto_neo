@@ -151,7 +151,7 @@ app.layout = html.Div([
     ], style={"display": "flex", "gap": "12px", "alignItems": "stretch",
               "marginBottom": "12px", "marginTop": "8px"}),
 
-    # Conteudo principal
+    # Conteudo principal — 3 cards principais com loading conjunto
     dcc.Loading(type="circle", children=html.Div([
 
         # Card: Resumo diario
@@ -210,27 +210,13 @@ app.layout = html.Div([
         html.Div([
             html.H3("Resultados por arquivo carregado",
                     style={**SUBTITLE_STYLE, "marginTop": "0", "marginBottom": "6px"}),
-            html.Div([
-                html.Label("Visualizar:", style={"fontWeight": "700", "fontSize": "13px",
-                                                  "marginRight": "12px", "color": "#4a148c"}),
-                dcc.RadioItems(
-                    id="selector-view-arquivos",
-                    options=[
-                        {"label": "  Todos do arquivo", "value": "todos"},
-                        {"label": "  Apenas inéditos",  "value": "ineditos"},
-                    ],
-                    value="todos",
-                    inline=True,
-                    inputStyle={"marginRight": "6px", "cursor": "pointer"},
-                    labelStyle={"marginRight": "20px", "fontFamily": "Roboto", "fontSize": "14px",
-                                "fontWeight": "600", "cursor": "pointer"},
-                ),
-            ], style={"background": "#f3e5f5", "padding": "8px 14px", "borderRadius": "6px",
-                      "marginBottom": "8px", "display": "flex", "alignItems": "center",
-                      "boxShadow": "0 1px 4px rgba(74,20,140,0.08)"}),
             html.P(
-                id="desc-tabela-arquivos",
-                style={"fontSize": "13px", "color": "#666", "marginBottom": "10px"}
+                "Combinações CPF+UC inéditas: pares CPF+UC que nunca existiram no banco antes deste arquivo. "
+                "Um mesmo CPF pode ter múltiplas UCs novas. "
+                "Processadas = combinações que já rodaram na macro; Pendentes = ainda não processadas.",
+                style={"fontSize": "13px", "color": "#555", "marginBottom": "10px",
+                       "background": "#f3e5f5", "padding": "8px 14px", "borderRadius": "6px",
+                       "borderLeft": "4px solid #7b1fa2"},
             ),
             dash_table.DataTable(
                 id="tabela-arquivos",
@@ -253,7 +239,55 @@ app.layout = html.Div([
         ], style={"background": "#fff", "borderRadius": "8px", "boxShadow": "0 2px 8px #e0e0e0",
                   "padding": "16px", "marginBottom": "18px"}),
 
-    ], style={"background": "#e8eaf6", "padding": "28px", "borderRadius": "10px", "marginBottom": "32px"})),
+    ], style={"background": "#e8eaf6", "padding": "28px", "borderRadius": "10px", "marginBottom": "18px"})),
+
+    # Card: Cobertura — carregamento independente (loading próprio)
+    dcc.Loading(type="dot", color="#1565c0", children=
+        html.Div([
+            html.H3("Cobertura dos arquivos — combinações CPF+UC novas vs existentes",
+                    style={**SUBTITLE_STYLE, "marginTop": "0", "marginBottom": "6px"}),
+            html.Div([
+                html.Span("ℹ Legenda: ",
+                          style={"fontWeight": "bold", "color": "#1565c0", "fontSize": "13px"}),
+                html.Span(
+                    "A unidade de contagem é a combinação única CPF + UC. "
+                    "Um mesmo CPF com UCs diferentes gera combinações distintas e todas são contadas. "
+                    "Linhas sem UC preenchida são excluídas do cálculo. "
+                    "\"Nova\" = par CPF+UC que aparece pela primeira vez em qualquer arquivo do sistema; "
+                    "\"Existente\" = par CPF+UC já visto em um arquivo anterior.",
+                    style={"fontSize": "13px", "color": "#555"}),
+            ], style={"background": "#e3f2fd", "border": "1px solid #90caf9",
+                      "borderRadius": "6px", "padding": "8px 12px", "marginBottom": "10px"}),
+            dash_table.DataTable(
+                id="tabela-cobertura",
+                columns=[
+                    {"name": "Arquivo",                  "id": "arquivo"},
+                    {"name": "Data carga",               "id": "data_carga"},
+                    {"name": "Total combinações",        "id": "total_combos"},
+                    {"name": "Novas",                    "id": "combos_novas"},
+                    {"name": "% novas",                  "id": "pct_novas"},
+                    {"name": "Existentes",               "id": "combos_existentes"},
+                    {"name": "% existentes",             "id": "pct_existentes"},
+                ],
+                data=[],
+                style_table={"overflowX": "auto", "borderRadius": "8px",
+                             "boxShadow": "0 2px 8px #e0e0e0", "marginTop": "4px"},
+                style_cell={"textAlign": "center", "fontFamily": "Roboto", "fontSize": "14px",
+                            "padding": "8px", "whiteSpace": "normal", "height": "auto"},
+                style_cell_conditional=[
+                    {"if": {"column_id": "arquivo"}, "textAlign": "left", "minWidth": "220px"},
+                ],
+                style_header={"backgroundColor": "#1565c0", "color": "white",
+                               "fontWeight": "bold", "fontFamily": "Roboto", "fontSize": "14px"},
+                style_data_conditional=[
+                    {"if": {"row_index": "odd"}, "backgroundColor": "#e3f2fd"},
+                ],
+                page_size=15,
+            ),
+        ], style={"background": "#fff", "borderRadius": "8px", "boxShadow": "0 2px 8px #e0e0e0",
+                  "padding": "16px", "marginBottom": "18px",
+                  "background": "#e8eaf6", "padding": "28px", "borderRadius": "10px"})
+    ),
 
     html.Div(style={"height": "8px"}),
 
@@ -316,18 +350,16 @@ def atualizar_opcoes_filtros(tipo_macro, fornecedor):
         dash.dependencies.Output("tabela-mensagens", "data"),
         dash.dependencies.Output("tabela-arquivos",  "data"),
         dash.dependencies.Output("tabela-arquivos",  "columns"),
-        dash.dependencies.Output("desc-tabela-arquivos", "children"),
     ],
     [
-        dash.dependencies.Input("resumo-dia-dropdown",     "value"),
-        dash.dependencies.Input("filtro-empresa-dropdown", "value"),
-        dash.dependencies.Input("filtro-arquivo-dropdown", "value"),
-        dash.dependencies.Input("selector-tipo-macro",     "value"),
-        dash.dependencies.Input("selector-fornecedor",     "value"),
-        dash.dependencies.Input("selector-view-arquivos",  "value"),
+        dash.dependencies.Input("resumo-dia-dropdown",        "value"),
+        dash.dependencies.Input("filtro-empresa-dropdown",    "value"),
+        dash.dependencies.Input("filtro-arquivo-dropdown",    "value"),
+        dash.dependencies.Input("selector-tipo-macro",        "value"),
+        dash.dependencies.Input("selector-fornecedor",        "value"),
     ]
 )
-def atualizar_dashboard(resumo_sel, filtro_empresa, filtro_arquivo, tipo_macro, fornecedor, view_arquivos):
+def atualizar_dashboard(resumo_sel, filtro_empresa, filtro_arquivo, tipo_macro, fornecedor):
     tipo = tipo_macro or "macro"
     filtro_forn = fornecedor if fornecedor and fornecedor != "todos" else None
     try:
@@ -335,49 +367,42 @@ def atualizar_dashboard(resumo_sel, filtro_empresa, filtro_arquivo, tipo_macro, 
             resumo_sel, filtro_empresa, tipo_macro=tipo,
             filtro_fornecedor=filtro_forn, filtro_arquivo=filtro_arquivo,
         )
-    except Exception:
+    except Exception as _e:
+        import traceback
+        print(f"[ERRO atualizar_dashboard] {_e}")
+        traceback.print_exc()
         data_resumo = []
         data_mensagens = []
         data_arquivos = []
 
-    # Colunas e descrição dependem do modo selecionado
-    if view_arquivos == "ineditos":
-        cols_arquivos = [
-            {"name": "Arquivo",              "id": "arquivo"},
-            {"name": "Data carga",            "id": "data_carga"},
-            {"name": "CPFs inéditos",        "id": "cpfs_ineditos"},
-            {"name": "UCs inéditas",         "id": "ucs_ineditas"},
-            {"name": "Processados",           "id": "ineditos_processados"},
-            {"name": "Pendentes",             "id": "ineditos_pendentes"},
-            {"name": "Ativos",                "id": "ineditos_ativos"},
-            {"name": "% Ativos",              "id": "pct_ineditos_ativos"},
-            {"name": "Inativos",              "id": "ineditos_inativos"},
-            {"name": "% Inativos",            "id": "pct_ineditos_inativos"},
-        ]
-        desc = (
-            "Mostrando apenas CPFs INÉDITOS: que apareceram pela primeira vez "
-            "neste arquivo e nunca estiveram em nenhum arquivo anterior."
-        )
-    else:
-        cols_arquivos = [
-            {"name": "Arquivo",              "id": "arquivo"},
-            {"name": "Data carga",            "id": "data_carga"},
-            {"name": "CPF+UCs no arquivo",   "id": "cpfs_no_arquivo"},
-            {"name": "Processados",           "id": "cpfs_processados"},
-            {"name": "Pendentes",             "id": "cpfs_pendentes"},
-            {"name": "Ativos",                "id": "ativos"},
-            {"name": "% Ativos",              "id": "pct_ativos"},
-            {"name": "Inativos",              "id": "inativos"},
-            {"name": "% Inativos",            "id": "pct_inativos"},
-        ]
-        desc = (
-            "Últimos 15 arquivos importados: CPFs únicos enviados pelo fornecedor, "
-            "quantos foram processados pela macro naquela distribuidora "
-            "(ativo = consolidado / inativo = excluído ou reprocessar). "
-            "Pendentes = combinações CPF+UC do arquivo que ainda não rodaram."
-        )
+    # Sempre exibe combinações CPF+UC inéditas
+    cols_arquivos = [
+        {"name": "Arquivo",                    "id": "arquivo"},
+        {"name": "Data carga",                  "id": "data_carga"},
+        {"name": "Combinações CPF+UC inéditas", "id": "ucs_ineditas"},
+        {"name": "Processadas",                 "id": "ineditos_processados"},
+        {"name": "Pendentes",                   "id": "ineditos_pendentes"},
+        {"name": "Ativas",                      "id": "ineditos_ativos"},
+        {"name": "% Ativas",                    "id": "pct_ineditos_ativos"},
+        {"name": "Inativas",                    "id": "ineditos_inativos"},
+        {"name": "% Inativas",                  "id": "pct_ineditos_inativos"},
+    ]
 
-    return data_resumo, data_mensagens, data_arquivos, cols_arquivos, desc
+    return data_resumo, data_mensagens, data_arquivos, cols_arquivos
+
+
+@app.callback(
+    dash.dependencies.Output("tabela-cobertura", "data"),
+    [
+        dash.dependencies.Input("selector-tipo-macro", "value"),
+        dash.dependencies.Input("selector-fornecedor", "value"),
+    ]
+)
+def atualizar_cobertura(_tipo_macro, _fornecedor):
+    try:
+        return orchestrator.build_tabela_cobertura()
+    except Exception:
+        return []
 
 
 @app.server.route("/_debug/data")

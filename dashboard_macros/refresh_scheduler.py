@@ -173,153 +173,429 @@ def refresh_macros() -> bool:
 
 
 def refresh_arquivos() -> bool:
-    """Atualiza dashboard_arquivos_agg com estratégia de temp table.
+    """Atualiza dashboard_arquivos_agg calculando as métricas em Python (pandas).
 
-    Estratégia segura:
-      1. Cria temp table sem índice → bulk insert rápido
-      2. Adiciona índice após bulk insert (passagem única)
-      3. TRUNCATE + INSERT na tabela final
+    Para contornar o net_write_timeout do RDS ao carregar tabela_macros (831k linhas),
+    usa estratégia de 2 queries pequenas:
+      1. SELECT cliente_id, distribuidora_id, MAX(id) GROUP BY  → só ints, 363k × 12 bytes = 4MB
+      2. SELECT id, status WHERE id IN (lista de max_ids)        → 363k × 2 colunas = ~3MB
+    Ambas completam bem abaixo dos 60s de net_write_timeout.
     """
     import pymysql
+    import pandas as pd
 
-    log.info("Iniciando refresh de dashboard_arquivos_agg...")
+    log.info("Iniciando refresh de dashboard_arquivos_agg (modo Python/2-step)...")
     t0 = time.time()
     try:
-        conn = pymysql.connect(**DB_CONFIG, connect_timeout=10, read_timeout=180)
-        with conn.cursor() as cur:
-            # Passo 1: temp table sem índice + bulk insert
-            cur.execute("DROP TEMPORARY TABLE IF EXISTS tmp_cpf_status")
-            cur.execute("""
-                CREATE TEMPORARY TABLE tmp_cpf_status (
-                    cpf              VARCHAR(20)  NOT NULL,
-                    distribuidora_id INT UNSIGNED NOT NULL,
-                    status           VARCHAR(30)  NOT NULL
-                )
-            """)
-            cur.execute("""
-                INSERT INTO tmp_cpf_status (cpf, distribuidora_id, status)
-                SELECT cl.cpf, tm.distribuidora_id, tm.status
-                FROM tabela_macros tm
-                INNER JOIN (
-                    SELECT MAX(id) AS max_id
-                    FROM tabela_macros
-                    WHERE status != 'pendente'
-                      AND resposta_id IS NOT NULL
-                    GROUP BY cliente_id, distribuidora_id
-                ) latest ON tm.id = latest.max_id
-                JOIN clientes cl ON cl.id = tm.cliente_id
-            """)
-            n_tmp = cur.rowcount
-            log.info(f"  tmp_cpf_status preenchida: {n_tmp:,} registros")
+        conn = pymysql.connect(**DB_CONFIG, connect_timeout=10, read_timeout=300)
+        cur = conn.cursor()
 
-            # Passo 2: índice após bulk insert
-            cur.execute(
-                "ALTER TABLE tmp_cpf_status ADD INDEX idx_cpf_dist (cpf, distribuidora_id)"
-            )
-            conn.commit()
+        # Aumentar timeouts de sessão para queries analíticas pesadas (GROUP BY 831k linhas)
+        cur.execute("SET SESSION net_write_timeout = 300")
+        cur.execute("SET SESSION net_read_timeout  = 300")
 
-            # Passo 2b: temp tables para CPFs/UCs inéditos (primeiro staging por CPF/UC)
-            cur.execute("DROP TEMPORARY TABLE IF EXISTS tmp_cpf_first")
-            cur.execute("""
-                CREATE TEMPORARY TABLE tmp_cpf_first (
-                    normalized_cpf   CHAR(11)     NOT NULL,
-                    first_staging_id INT UNSIGNED NOT NULL,
-                    INDEX (first_staging_id),
-                    INDEX (normalized_cpf)
-                )
-                SELECT normalized_cpf, MIN(staging_id) AS first_staging_id
-                FROM staging_import_rows
-                WHERE validation_status = 'valid'
-                GROUP BY normalized_cpf
-            """)
-            cur.execute("DROP TEMPORARY TABLE IF EXISTS tmp_uc_first")
-            cur.execute("""
-                CREATE TEMPORARY TABLE tmp_uc_first (
-                    normalized_cpf   CHAR(11)     NOT NULL,
-                    normalized_uc    CHAR(10)     NOT NULL,
-                    first_staging_id INT UNSIGNED NOT NULL,
-                    INDEX (first_staging_id)
-                )
-                SELECT normalized_cpf, normalized_uc, MIN(staging_id) AS first_staging_id
-                FROM staging_import_rows
-                WHERE validation_status = 'valid'
-                  AND normalized_uc IS NOT NULL
-                  AND normalized_uc != ''
-                GROUP BY normalized_cpf, normalized_uc
-            """)
-            conn.commit()
+        # --- 1. staging_imports ---
+        cur.execute("""
+            SELECT id, filename, DATE(created_at) AS data_carga, distribuidora_nome
+            FROM staging_imports
+        """)
+        cols = [d[0] for d in cur.description]
+        imports_df = pd.DataFrame(cur.fetchall(), columns=cols)
+        imports_df["id"] = imports_df["id"].astype(int)
+        imports_df["dist_id"] = pd.to_numeric(imports_df["distribuidora_nome"], errors="coerce")
+        log.info(f"  staging_imports: {len(imports_df)} arquivos")
 
-            # Passo 3: popular tabela final
-            cur.execute("TRUNCATE TABLE dashboard_arquivos_agg")
-            cur.execute("""
-                INSERT INTO dashboard_arquivos_agg
-                    (arquivo, data_carga, cpfs_no_arquivo, cpfs_processados, ativos, inativos,
-                     cpfs_ineditos, ucs_ineditas, ineditos_processados, ineditos_ativos, ineditos_inativos)
-                SELECT
-                    si.filename                                                                   AS arquivo,
-                    DATE(si.created_at)                                                           AS data_carga,
-                    COUNT(DISTINCT sir.normalized_cpf)                                            AS cpfs_no_arquivo,
-                    COUNT(DISTINCT CASE WHEN cs.status IS NOT NULL THEN sir.normalized_cpf END)   AS cpfs_processados,
-                    COUNT(DISTINCT CASE WHEN cs.status = 'consolidado' THEN sir.normalized_cpf END) AS ativos,
-                    COUNT(DISTINCT CASE
-                        WHEN cs.status IN ('excluido', 'reprocessar') THEN sir.normalized_cpf
-                    END)                                                                          AS inativos,
-                    COUNT(DISTINCT CASE
-                        WHEN cf.first_staging_id = si.id THEN sir.normalized_cpf
-                    END)                                                                          AS cpfs_ineditos,
-                    COUNT(DISTINCT CASE
-                        WHEN uf.first_staging_id = si.id
-                        THEN CONCAT(sir.normalized_cpf, '|', sir.normalized_uc)
-                    END)                                                                          AS ucs_ineditas,
-                    COUNT(DISTINCT CASE
-                        WHEN cf.first_staging_id = si.id AND cs.status IS NOT NULL
-                        THEN sir.normalized_cpf
-                    END)                                                                          AS ineditos_processados,
-                    COUNT(DISTINCT CASE
-                        WHEN cf.first_staging_id = si.id AND cs.status = 'consolidado'
-                        THEN sir.normalized_cpf
-                    END)                                                                          AS ineditos_ativos,
-                    COUNT(DISTINCT CASE
-                        WHEN cf.first_staging_id = si.id AND cs.status IN ('excluido', 'reprocessar')
-                        THEN sir.normalized_cpf
-                    END)                                                                          AS ineditos_inativos
-                FROM staging_imports si
-                JOIN staging_import_rows sir
-                    ON  sir.staging_id        = si.id
-                    AND sir.validation_status = 'valid'
-                LEFT JOIN tmp_cpf_status cs
-                    ON  cs.cpf              = sir.normalized_cpf
-                    AND cs.distribuidora_id = CAST(si.distribuidora_nome AS UNSIGNED)
-                LEFT JOIN tmp_cpf_first cf
-                    ON cf.normalized_cpf = sir.normalized_cpf
-                LEFT JOIN tmp_uc_first uf
-                    ON  uf.normalized_cpf = sir.normalized_cpf
-                    AND uf.normalized_uc  = sir.normalized_uc
-                GROUP BY si.id, si.filename, DATE(si.created_at)
-                ORDER BY si.id DESC
-            """)
-            n_final = cur.rowcount
-            conn.commit()
+        # --- 2. staging_import_rows (somente valid) ---
+        cur.execute("""
+            SELECT staging_id, normalized_cpf, normalized_uc
+            FROM staging_import_rows
+            WHERE validation_status = 'valid'
+              AND normalized_cpf IS NOT NULL
+        """)
+        cols = [d[0] for d in cur.description]
+        rows_df = pd.DataFrame(cur.fetchall(), columns=cols)
+        rows_df["staging_id"] = rows_df["staging_id"].astype(int)
+        rows_df["normalized_uc"] = rows_df["normalized_uc"].fillna("").str.strip()
+        log.info(f"  staging_import_rows (valid): {len(rows_df):,} linhas")
 
-            cur.execute("DROP TEMPORARY TABLE IF EXISTS tmp_cpf_status")
-            cur.execute("DROP TEMPORARY TABLE IF EXISTS tmp_cpf_first")
-            cur.execute("DROP TEMPORARY TABLE IF EXISTS tmp_uc_first")
+        # --- 3. tabela_macros: 2 queries pequenas para evitar transmitir 831k linhas completas ---
+
+        # 3a. Somente (cliente_id, distribuidora_id, max_id) — tipos inteiros, ~4MB
+        cur.execute("""
+            SELECT cliente_id, distribuidora_id, MAX(id) AS max_id
+            FROM tabela_macros
+            WHERE status != 'pendente'
+              AND resposta_id IS NOT NULL
+            GROUP BY cliente_id, distribuidora_id
+        """)
+        cols = [d[0] for d in cur.description]
+        grp_df = pd.DataFrame(cur.fetchall(), columns=cols)
+        grp_df = grp_df.astype(int)
+        log.info(f"  tabela_macros GROUP BY: {len(grp_df):,} combinações cliente×dist")
+
+        # 3b. Status somente para os max_ids — usa índice PRIMARY KEY, leve
+        max_ids = grp_df["max_id"].tolist()
+        # Carrega em batches de 20k ids para evitar IN() gigante
+        batch_size = 20000
+        status_parts = []
+        for i in range(0, len(max_ids), batch_size):
+            batch = max_ids[i:i + batch_size]
+            ids_str = ",".join(str(x) for x in batch)
+            cur.execute(f"SELECT id, status FROM tabela_macros WHERE id IN ({ids_str})")
+            status_parts.extend(cur.fetchall())
+        status_map = {r[0]: r[1] for r in status_parts}  # id → status
+
+        # Juntar: (cliente_id, distribuidora_id) → status
+        grp_df["status"] = grp_df["max_id"].map(status_map)
+        log.info(f"  status mapeado: {grp_df['status'].notna().sum():,} registros")
+
+        # --- 4. clientes: cpf → cliente_id ---
+        cur.execute("SELECT id, cpf FROM clientes")
+        cols = [d[0] for d in cur.description]
+        clientes_df = pd.DataFrame(cur.fetchall(), columns=cols)
+        clientes_df.columns = ["cliente_id", "cpf"]
+        log.info(f"  clientes: {len(clientes_df):,} linhas")
 
         conn.close()
+
+        # Montar status_df: (cpf, distribuidora_id, status)
+        status_df = grp_df.merge(clientes_df, on="cliente_id", how="left")
+        status_df = status_df[["cpf", "distribuidora_id", "status"]].dropna(subset=["cpf"])
+        log.info(f"  status_df final: {len(status_df):,} linhas")
+
+        # ----------------------------------------------------------------
+        # Cálculos em pandas
+        # ----------------------------------------------------------------
+
+        cpf_first = (
+            rows_df.groupby("normalized_cpf")["staging_id"]
+            .min().reset_index()
+            .rename(columns={"staging_id": "first_staging_id"})
+        )
+        uc_rows = rows_df[rows_df["normalized_uc"] != ""].copy()
+        uc_first = (
+            uc_rows.groupby(["normalized_cpf", "normalized_uc"])["staging_id"]
+            .min().reset_index()
+            .rename(columns={"staging_id": "first_staging_id"})
+        )
+
+        rows_df = rows_df.merge(cpf_first, on="normalized_cpf", how="left")
+        rows_df["cpf_inedito"] = rows_df["staging_id"] == rows_df["first_staging_id"]
+        rows_df = rows_df.drop(columns=["first_staging_id"])
+
+        uc_rows = rows_df[rows_df["normalized_uc"] != ""].copy()
+        uc_rows = uc_rows.merge(uc_first, on=["normalized_cpf", "normalized_uc"], how="left")
+        uc_rows["uc_inedita"] = uc_rows["staging_id"] == uc_rows["first_staging_id"]
+
+        resultados = []
+        for _, arq in imports_df.iterrows():
+            sid = int(arq["id"])
+            dist_id = arq["dist_id"]
+
+            sub = rows_df[rows_df["staging_id"] == sid]
+            if sub.empty:
+                continue
+
+            cpfs_no_arquivo = sub["normalized_cpf"].nunique()
+            cpfs_ineditos   = int(sub[sub["cpf_inedito"]]["normalized_cpf"].nunique())
+
+            sub_uc = uc_rows[uc_rows["staging_id"] == sid]
+            ucs_ineditas = int(sub_uc["uc_inedita"].sum()) if not sub_uc.empty else 0
+
+            cpfs_processados = ativos = inativos = 0
+            ineditos_proc = ineditos_at = ineditos_inat = 0
+
+            if pd.notna(dist_id):
+                status_arq = status_df[status_df["distribuidora_id"] == int(dist_id)]
+                sub_status = sub.merge(
+                    status_arq[["cpf", "status"]],
+                    left_on="normalized_cpf", right_on="cpf", how="left"
+                )
+                cpfs_processados = int(sub_status[sub_status["status"].notna()]["normalized_cpf"].nunique())
+                ativos           = int(sub_status[sub_status["status"] == "consolidado"]["normalized_cpf"].nunique())
+                inativos         = int(sub_status[sub_status["status"].isin(["excluido", "reprocessar"])]["normalized_cpf"].nunique())
+                sub_in = sub_status[sub_status["cpf_inedito"]]
+                ineditos_proc = int(sub_in[sub_in["status"].notna()]["normalized_cpf"].nunique())
+                ineditos_at   = int(sub_in[sub_in["status"] == "consolidado"]["normalized_cpf"].nunique())
+                ineditos_inat = int(sub_in[sub_in["status"].isin(["excluido", "reprocessar"])]["normalized_cpf"].nunique())
+
+            resultados.append((
+                arq["filename"], str(arq["data_carga"]),
+                cpfs_no_arquivo, cpfs_processados, ativos, inativos,
+                cpfs_ineditos, ucs_ineditas,
+                ineditos_proc, ineditos_at, ineditos_inat,
+            ))
+            log.info(f"  arquivo id={sid}: {cpfs_no_arquivo:,} CPFs, {cpfs_processados:,} proc, {ativos:,} ativos")
+
+        # --- 5. Gravar na tabela ---
+        limpar_queries_orfas()
+        conn_out = pymysql.connect(**DB_CONFIG, connect_timeout=10, read_timeout=120)
+        cur_out = conn_out.cursor()
+        cur_out.execute("SET SESSION lock_wait_timeout = 60")
+        cur_out.execute("TRUNCATE TABLE dashboard_arquivos_agg")
+        cur_out.executemany("""
+            INSERT INTO dashboard_arquivos_agg
+                (arquivo, data_carga, cpfs_no_arquivo, cpfs_processados, ativos, inativos,
+                 cpfs_ineditos, ucs_ineditas, ineditos_processados, ineditos_ativos, ineditos_inativos)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """, resultados)
+        conn_out.commit()
+        conn_out.close()
+
         elapsed = time.time() - t0
-        log.info(f"dashboard_arquivos_agg OK: {n_final} arquivos em {elapsed:.1f}s")
+        log.info(f"dashboard_arquivos_agg OK: {len(resultados)} arquivos em {elapsed:.1f}s")
         return True
     except Exception as e:
         elapsed = time.time() - t0
         log.error(f"dashboard_arquivos_agg FALHOU em {elapsed:.1f}s: {e}")
-        # Tentar limpar temp table
-        try:
-            conn2 = pymysql.connect(**DB_CONFIG, connect_timeout=5, read_timeout=5)
-            with conn2.cursor() as c:
-                c.execute("DROP TEMPORARY TABLE IF EXISTS tmp_cpf_status")
-            conn2.close()
-        except Exception:
-            pass
+        return False
+
+
+
+    import pymysql
+    import pandas as pd
+
+    log.info("Iniciando refresh de dashboard_arquivos_agg (modo Python)...")
+    t0 = time.time()
+    try:
+        conn = pymysql.connect(**DB_CONFIG, connect_timeout=10, read_timeout=60)
+        cur = conn.cursor()
+
+        # --- 1. staging_imports ---
+        cur.execute("""
+            SELECT id, filename, DATE(created_at) AS data_carga, distribuidora_nome
+            FROM staging_imports
+        """)
+        cols = [d[0] for d in cur.description]
+        imports_df = pd.DataFrame(cur.fetchall(), columns=cols)
+        imports_df["id"] = imports_df["id"].astype(int)
+        imports_df["dist_id"] = pd.to_numeric(imports_df["distribuidora_nome"], errors="coerce")
+        log.info(f"  staging_imports: {len(imports_df)} arquivos")
+
+        # --- 2. staging_import_rows (somente valid) ---
+        cur.execute("""
+            SELECT staging_id, normalized_cpf, normalized_uc
+            FROM staging_import_rows
+            WHERE validation_status = 'valid'
+              AND normalized_cpf IS NOT NULL
+        """)
+        cols = [d[0] for d in cur.description]
+        rows_df = pd.DataFrame(cur.fetchall(), columns=cols)
+        rows_df["staging_id"] = rows_df["staging_id"].astype(int)
+        rows_df["normalized_uc"] = rows_df["normalized_uc"].fillna("").str.strip()
+        log.info(f"  staging_import_rows (valid): {len(rows_df):,} linhas")
+
+        # --- 3. clientes: cpf → id mapping (necessário para lookup em tabela_macros) ---
+        cur.execute("SELECT id, cpf FROM clientes")
+        cols = [d[0] for d in cur.description]
+        clientes_df = pd.DataFrame(cur.fetchall(), columns=cols)
+        clientes_df.columns = ["cliente_id", "cpf"]
+        log.info(f"  clientes: {len(clientes_df):,} linhas")
+
+        conn.close()
+
+        # ----------------------------------------------------------------
+        # Cálculos em pandas
+        # ----------------------------------------------------------------
+
+        # Primeira ocorrência de cada CPF e CPF+UC por staging_id
+        cpf_first = (
+            rows_df.groupby("normalized_cpf")["staging_id"]
+            .min()
+            .reset_index()
+            .rename(columns={"staging_id": "first_staging_id"})
+        )
+        uc_rows = rows_df[rows_df["normalized_uc"] != ""].copy()
+        uc_first = (
+            uc_rows.groupby(["normalized_cpf", "normalized_uc"])["staging_id"]
+            .min()
+            .reset_index()
+            .rename(columns={"staging_id": "first_staging_id"})
+        )
+
+        # Marcar inéditos no rows_df
+        rows_df = rows_df.merge(cpf_first, on="normalized_cpf", how="left")
+        rows_df["cpf_inedito"] = rows_df["staging_id"] == rows_df["first_staging_id"]
+        rows_df = rows_df.drop(columns=["first_staging_id"])
+
+        uc_rows = rows_df[rows_df["normalized_uc"] != ""].copy()
+        uc_rows = uc_rows.merge(uc_first, on=["normalized_cpf", "normalized_uc"], how="left")
+        uc_rows["uc_inedita"] = uc_rows["staging_id"] == uc_rows["first_staging_id"]
+
+        # Mapear CPF → cliente_id para lookup pontual em tabela_macros
+        cpf_to_cliente = clientes_df.set_index("cpf")["cliente_id"].to_dict()
+
+        # Agregar por arquivo — status via lookup pontual por cliente_id
+        resultados = []
+        for _, arq in imports_df.iterrows():
+            sid = int(arq["id"])
+            dist_id = arq["dist_id"]
+
+            sub = rows_df[rows_df["staging_id"] == sid]
+            if sub.empty:
+                continue
+
+            cpfs_unicos = sub["normalized_cpf"].unique().tolist()
+            cpfs_no_arquivo = len(cpfs_unicos)
+            cpfs_ineditos   = int(sub[sub["cpf_inedito"]]["normalized_cpf"].nunique())
+
+            # UCs inéditas
+            sub_uc = uc_rows[uc_rows["staging_id"] == sid]
+            ucs_ineditas = int(sub_uc["uc_inedita"].sum()) if not sub_uc.empty else 0
+
+            # Lookup status em tabela_macros para apenas os CPFs deste arquivo
+            cpfs_processados = ativos = inativos = ineditos_proc = ineditos_at = ineditos_inat = 0
+            if pd.notna(dist_id) and cpfs_unicos:
+                cliente_ids = [
+                    cpf_to_cliente[c] for c in cpfs_unicos if c in cpf_to_cliente
+                ]
+                if cliente_ids:
+                    try:
+                        conn2 = pymysql.connect(**DB_CONFIG, connect_timeout=10, read_timeout=60)
+                        cur2 = conn2.cursor()
+                        # Buscar status mais recente por cliente_id nesta distribuidora
+                        ids_str = ",".join(str(i) for i in cliente_ids)
+                        cur2.execute(f"""
+                            SELECT tm.cliente_id, tm.status
+                            FROM tabela_macros tm
+                            INNER JOIN (
+                                SELECT MAX(id) AS max_id
+                                FROM tabela_macros
+                                WHERE cliente_id IN ({ids_str})
+                                  AND distribuidora_id = {int(dist_id)}
+                                  AND status != 'pendente'
+                                  AND resposta_id IS NOT NULL
+                                GROUP BY cliente_id
+                            ) latest ON tm.id = latest.max_id
+                        """)
+                        status_rows = cur2.fetchall()
+                        conn2.close()
+
+                        # Mapear cliente_id → status
+                        cli_status = {r[0]: r[1] for r in status_rows}
+                        # Mapear CPF → status via cliente_id
+                        cpf_status = {}
+                        for cpf in cpfs_unicos:
+                            cid = cpf_to_cliente.get(cpf)
+                            if cid and cid in cli_status:
+                                cpf_status[cpf] = cli_status[cid]
+
+                        ineditos_cpfs = set(
+                            sub[sub["cpf_inedito"]]["normalized_cpf"].unique()
+                        )
+                        cpfs_processados = len(cpf_status)
+                        ativos    = sum(1 for s in cpf_status.values() if s == "consolidado")
+                        inativos  = sum(1 for s in cpf_status.values() if s in ("excluido", "reprocessar"))
+                        ineditos_proc = sum(1 for c, s in cpf_status.items() if c in ineditos_cpfs)
+                        ineditos_at   = sum(1 for c, s in cpf_status.items() if c in ineditos_cpfs and s == "consolidado")
+                        ineditos_inat = sum(1 for c, s in cpf_status.items() if c in ineditos_cpfs and s in ("excluido", "reprocessar"))
+                    except Exception as e_status:
+                        log.warning(f"  Status lookup falhou para arquivo {sid}: {e_status}")
+
+            resultados.append((
+                arq["filename"], str(arq["data_carga"]),
+                int(cpfs_no_arquivo), int(cpfs_processados), int(ativos), int(inativos),
+                int(cpfs_ineditos), int(ucs_ineditas),
+                int(ineditos_proc), int(ineditos_at), int(ineditos_inat),
+            ))
+            log.info(f"  arquivo id={sid}: {cpfs_no_arquivo:,} CPFs, {cpfs_processados:,} proc, {ativos:,} ativos")
+
+        # --- 4. Gravar na tabela ---
+        conn_out = pymysql.connect(**DB_CONFIG, connect_timeout=10, read_timeout=30)
+        cur_out = conn_out.cursor()
+        cur_out.execute("TRUNCATE TABLE dashboard_arquivos_agg")
+        cur_out.executemany("""
+            INSERT INTO dashboard_arquivos_agg
+                (arquivo, data_carga, cpfs_no_arquivo, cpfs_processados, ativos, inativos,
+                 cpfs_ineditos, ucs_ineditas, ineditos_processados, ineditos_ativos, ineditos_inativos)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """, resultados)
+        conn_out.commit()
+        conn_out.close()
+
+        elapsed = time.time() - t0
+        log.info(f"dashboard_arquivos_agg OK: {len(resultados)} arquivos em {elapsed:.1f}s")
+        return True
+    except Exception as e:
+        elapsed = time.time() - t0
+        log.error(f"dashboard_arquivos_agg FALHOU em {elapsed:.1f}s: {e}")
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Refresh: cobertura (novos vs existentes por arquivo) — query rápida
+# ---------------------------------------------------------------------------
+def refresh_cobertura() -> bool:
+    """Atualiza dashboard_cobertura_agg: CPFs/UCs novos vs existentes por arquivo.
+
+    Query leve — só usa staging_import_rows (sem JOIN em tabela_macros).
+    """
+    import pymysql
+
+    log.info("Iniciando refresh de dashboard_cobertura_agg...")
+    t0 = time.time()
+    try:
+        conn = pymysql.connect(**DB_CONFIG, connect_timeout=10, read_timeout=180)
+        cur = conn.cursor()
+
+        # Temp table: primeiro staging_id por combinação CPF+UC (unidade de contagem)
+        cur.execute("DROP TEMPORARY TABLE IF EXISTS tmp_cob_combo_first")
+        cur.execute("""
+            CREATE TEMPORARY TABLE tmp_cob_combo_first (
+                normalized_cpf   CHAR(11)     NOT NULL,
+                normalized_uc    CHAR(10)     NOT NULL,
+                first_staging_id INT UNSIGNED NOT NULL,
+                INDEX (normalized_cpf, normalized_uc)
+            )
+            SELECT normalized_cpf, normalized_uc, MIN(staging_id) AS first_staging_id
+            FROM staging_import_rows
+            WHERE validation_status = 'valid'
+              AND normalized_uc IS NOT NULL AND normalized_uc != ''
+            GROUP BY normalized_cpf, normalized_uc
+        """)
+        conn.commit()
+
+        # Popula cobertura — contagem exclusiva por combinação CPF+UC
+        cur.execute("DELETE FROM dashboard_cobertura_agg")
+        cur.execute("""
+            INSERT INTO dashboard_cobertura_agg
+                (arquivo, data_carga, total_combos, combos_novas, combos_existentes)
+            SELECT
+                si.filename                                                           AS arquivo,
+                DATE(si.created_at)                                                   AS data_carga,
+                COUNT(DISTINCT CONCAT(sir.normalized_cpf, '|', sir.normalized_uc))   AS total_combos,
+                COUNT(DISTINCT CASE
+                    WHEN cf.first_staging_id = si.id
+                    THEN CONCAT(sir.normalized_cpf, '|', sir.normalized_uc)
+                END)                                                                  AS combos_novas,
+                COUNT(DISTINCT CONCAT(sir.normalized_cpf, '|', sir.normalized_uc))
+                  - COUNT(DISTINCT CASE
+                    WHEN cf.first_staging_id = si.id
+                    THEN CONCAT(sir.normalized_cpf, '|', sir.normalized_uc)
+                  END)                                                                AS combos_existentes
+            FROM staging_imports si
+            JOIN staging_import_rows sir
+                ON  sir.staging_id        = si.id
+                AND sir.validation_status = 'valid'
+                AND sir.normalized_uc IS NOT NULL AND sir.normalized_uc != ''
+            LEFT JOIN tmp_cob_combo_first cf
+                ON  cf.normalized_cpf = sir.normalized_cpf
+                AND cf.normalized_uc  = sir.normalized_uc
+            GROUP BY si.id, si.filename, DATE(si.created_at)
+            ORDER BY si.id DESC
+        """)
+        n_final = cur.rowcount
+        conn.commit()
+
+        cur.execute("DROP TEMPORARY TABLE IF EXISTS tmp_cob_combo_first")
+        conn.close()
+
+        elapsed = time.time() - t0
+        log.info(f"dashboard_cobertura_agg OK: {n_final} arquivos em {elapsed:.1f}s")
+        return True
+    except Exception as e:
+        elapsed = time.time() - t0
+        log.error(f"dashboard_cobertura_agg FALHOU em {elapsed:.1f}s: {e}")
         return False
 
 
@@ -338,13 +614,17 @@ def executar_refresh():
     # 2. Refresh macros (rápido ~1s)
     ok_macros = refresh_macros()
 
-    # 3. Refresh arquivos (mais pesado ~10-20s)
+    # 3. Refresh cobertura (rápido — só staging_import_rows)
+    ok_cobertura = refresh_cobertura()
+
+    # 4. Refresh arquivos (mais pesado ~10-20s)
     ok_arquivos = refresh_arquivos()
 
-    status = "OK" if (ok_macros and ok_arquivos) else "PARCIAL"
+    status = "OK" if (ok_macros and ok_arquivos and ok_cobertura) else "PARCIAL"
     log.info(
         f"Ciclo concluído ({status}): "
         f"macros={'OK' if ok_macros else 'FALHA'}, "
+        f"cobertura={'OK' if ok_cobertura else 'FALHA'}, "
         f"arquivos={'OK' if ok_arquivos else 'FALHA'}"
     )
     return ok_macros and ok_arquivos

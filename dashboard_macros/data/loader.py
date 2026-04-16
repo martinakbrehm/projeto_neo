@@ -10,9 +10,9 @@ from config import db_destino  # noqa: E402
 
 DB_CONFIG = db_destino()
 
-_CACHE: dict = {}       # cache por tipo {'macro': df, 'api': df}
-_CACHE_STATS: dict = {}  # cache para stats_por_arquivo
-_CACHE_STATS_TTL = 300   # segundos (5 min) — query pesada com ROW_NUMBER
+_CACHE: dict = {}        # cache por tipo {'macro': df, 'api': df} — sem TTL, vive durante o processo
+_CACHE_STATS: dict = {}  # cache para stats_por_arquivo / cobertura
+_CACHE_STATS_TTL = 300   # segundos (5 min)
 
 # ---------------------------------------------------------------------------
 # Tabela materializada — populada pela stored procedure
@@ -54,7 +54,7 @@ def carregar_dados(tipo: str = "macro") -> pd.DataFrame:
     """Carrega dados do banco de dados.
 
     tipo: 'macro' | 'macro_pipeline' | 'api'
-    Resultado é cacheado em memória por tipo.
+    Resultado é cacheado em memória por tipo (sem TTL — vive durante o processo).
     """
     tipo = tipo if tipo in SQLs else "macro"
     if tipo in _CACHE:
@@ -147,6 +147,36 @@ def carregar_stats_por_arquivo() -> pd.DataFrame:
         return df.copy()
     except Exception as e:
         print(f"[ERRO] carregar_stats_por_arquivo: {e}")
+        return pd.DataFrame()
+
+
+_SQL_COBERTURA = """
+    SELECT arquivo, data_carga,
+           total_combos, combos_novas, combos_existentes
+    FROM dashboard_cobertura_agg
+    ORDER BY data_carga DESC, arquivo
+"""
+
+
+def carregar_cobertura() -> pd.DataFrame:
+    """Retorna tabela de novos vs existentes por arquivo de staging."""
+    cached = _CACHE_STATS.get("cobertura")
+    if cached is not None:
+        df_cached, ts = cached
+        if time.time() - ts < _CACHE_STATS_TTL:
+            return df_cached.copy()
+    try:
+        conn = pymysql.connect(**DB_CONFIG)
+        with conn.cursor() as cur:
+            cur.execute(_SQL_COBERTURA)
+            cols = [d[0] for d in cur.description]
+            rows = cur.fetchall()
+        conn.close()
+        df = pd.DataFrame(rows, columns=cols)
+        _CACHE_STATS["cobertura"] = (df, time.time())
+        return df.copy()
+    except Exception as e:
+        print(f"[ERRO] carregar_cobertura: {e}")
         return pd.DataFrame()
 
 

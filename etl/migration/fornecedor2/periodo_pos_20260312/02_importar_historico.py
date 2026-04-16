@@ -44,7 +44,7 @@ STAGING_FILENAME = "23/03/300k.csv"
 IMPORTED_BY      = "migration_historica_pos_20260312"
 DATA_IMPORTACAO  = "2026-03-23"
 
-BATCH_SIZE = 500
+BATCH_SIZE = 10
 VALID_RESPOSTA_IDS = set(range(12))  # 0..11
 
 
@@ -184,7 +184,7 @@ def bulk_inserir_staging_rows(cursor, staging_id: int, registros: list):
     if not registros:
         return
 
-    ph = ", ".join(["(%s,%s,%s,%s,%s,%s,%s,%s)"] * len(registros))
+    ph = ", ".join(["(%s,%s,%s,%s,%s,%s,%s,%s,%s)"] * len(registros))
     vals = []
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     for r in registros:
@@ -499,8 +499,22 @@ def main():
             batch_end = min(batch_start + BATCH_SIZE, total)
             lote = df.iloc[batch_start:batch_end]
 
-            ok, skipped, errs = processar_lote(cursor, lote, cpf_cache, uc_cache)
-            conn.commit()
+            # Retry em caso de deadlock
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    ok, skipped, errs = processar_lote(cursor, lote, cpf_cache, uc_cache)
+                    conn.commit()
+                    break
+                except pymysql.err.OperationalError as e:
+                    if "Deadlock found" in str(e) and attempt < max_retries - 1:
+                        print(f"  [DEADLOCK] Tentativa {attempt + 1}/{max_retries} falhou, tentando novamente...")
+                        conn.rollback()
+                        import time
+                        time.sleep(1)  # Pequena pausa
+                        continue
+                    else:
+                        raise
 
             ok_total += ok
             skip_total += skipped
