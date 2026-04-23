@@ -220,9 +220,42 @@ app.layout = html.Div([
 
         ], style={"width": "100%"}),
 
-        # Card: Resultados por arquivo carregado
+        # Card: Resultados por arquivo carregado — Visao Geral
         html.Div([
-            html.H3("Resultados por arquivo carregado",
+            html.H3("Resultados por arquivo carregado — Visão Geral",
+                    style={**SUBTITLE_STYLE, "marginTop": "0", "marginBottom": "6px"}),
+            html.P(
+                "CPFs no arquivo = total de CPFs válidos importados. "
+                "Processados = CPFs cujo último status na macro não é 'pendente'. "
+                "Pendentes = ainda aguardando processamento pela macro.",
+                style={"fontSize": "13px", "color": "#555", "marginBottom": "10px",
+                       "background": "#e3f2fd", "padding": "8px 14px", "borderRadius": "6px",
+                       "borderLeft": "4px solid #1565c0"},
+            ),
+            dash_table.DataTable(
+                id="tabela-arquivos-geral",
+                columns=[],
+                data=[],
+                style_table={"overflowX": "auto", "borderRadius": "8px",
+                             "boxShadow": "0 2px 8px #e0e0e0", "marginTop": "4px"},
+                style_cell={"textAlign": "center", "fontFamily": "Roboto", "fontSize": "14px",
+                            "padding": "8px", "whiteSpace": "normal", "height": "auto"},
+                style_cell_conditional=[
+                    {"if": {"column_id": "arquivo"}, "textAlign": "left"},
+                ],
+                style_header={"backgroundColor": "#1565c0", "color": "white",
+                               "fontWeight": "bold", "fontFamily": "Roboto", "fontSize": "15px"},
+                style_data_conditional=[
+                    {"if": {"row_index": "odd"}, "backgroundColor": "#e3f2fd"},
+                ],
+                page_size=15,
+            ),
+        ], style={"background": "#fff", "borderRadius": "8px", "boxShadow": "0 2px 8px #e0e0e0",
+                  "padding": "16px", "marginBottom": "18px"}),
+
+        # Card: Resultados por arquivo — Inéditos
+        html.Div([
+            html.H3("Inéditos por arquivo",
                     style={**SUBTITLE_STYLE, "marginTop": "0", "marginBottom": "6px"}),
             html.P(
                 "Combinações CPF+UC inéditas: pares CPF+UC que nunca existiram no banco antes deste arquivo. "
@@ -234,7 +267,7 @@ app.layout = html.Div([
             ),
             dash_table.DataTable(
                 id="tabela-arquivos",
-                columns=[],  # Definido dinamicamente via callback
+                columns=[],
                 data=[],
                 style_table={"overflowX": "auto", "borderRadius": "8px",
                              "boxShadow": "0 2px 8px #e0e0e0", "marginTop": "4px"},
@@ -247,6 +280,38 @@ app.layout = html.Div([
                                "fontWeight": "bold", "fontFamily": "Roboto", "fontSize": "15px"},
                 style_data_conditional=[
                     {"if": {"row_index": "odd"}, "backgroundColor": "#f3e5f5"},
+                ],
+                page_size=15,
+            ),
+        ], style={"background": "#fff", "borderRadius": "8px", "boxShadow": "0 2px 8px #e0e0e0",
+                  "padding": "16px", "marginBottom": "18px"}),
+
+        # Card: Cobertura — Novos vs Existentes
+        html.Div([
+            html.H3("Cobertura: combinações CPF+UC novas vs existentes",
+                    style={**SUBTITLE_STYLE, "marginTop": "0", "marginBottom": "6px"}),
+            html.P(
+                "Combinação nova = par CPF+UC que aparece pela primeira vez considerando todos os arquivos. "
+                "Combinação existente = par CPF+UC já presente em arquivo importado anteriormente.",
+                style={"fontSize": "13px", "color": "#555", "marginBottom": "10px",
+                       "background": "#e8f5e9", "padding": "8px 14px", "borderRadius": "6px",
+                       "borderLeft": "4px solid #2e7d32"},
+            ),
+            dash_table.DataTable(
+                id="tabela-cobertura",
+                columns=[],
+                data=[],
+                style_table={"overflowX": "auto", "borderRadius": "8px",
+                             "boxShadow": "0 2px 8px #e0e0e0", "marginTop": "4px"},
+                style_cell={"textAlign": "center", "fontFamily": "Roboto", "fontSize": "14px",
+                            "padding": "8px", "whiteSpace": "normal", "height": "auto"},
+                style_cell_conditional=[
+                    {"if": {"column_id": "arquivo"}, "textAlign": "left"},
+                ],
+                style_header={"backgroundColor": "#2e7d32", "color": "white",
+                               "fontWeight": "bold", "fontFamily": "Roboto", "fontSize": "15px"},
+                style_data_conditional=[
+                    {"if": {"row_index": "odd"}, "backgroundColor": "#e8f5e9"},
                 ],
                 page_size=15,
             ),
@@ -321,10 +386,14 @@ def atualizar_opcoes_filtros(tipo_macro, fornecedor, n_intervals):
 
 @app.callback(
     [
-        dash.dependencies.Output("tabela-resumo",    "data"),
-        dash.dependencies.Output("tabela-mensagens", "data"),
-        dash.dependencies.Output("tabela-arquivos",  "data"),
-        dash.dependencies.Output("tabela-arquivos",  "columns"),
+        dash.dependencies.Output("tabela-resumo",         "data"),
+        dash.dependencies.Output("tabela-mensagens",      "data"),
+        dash.dependencies.Output("tabela-arquivos-geral", "data"),
+        dash.dependencies.Output("tabela-arquivos-geral", "columns"),
+        dash.dependencies.Output("tabela-arquivos",       "data"),
+        dash.dependencies.Output("tabela-arquivos",       "columns"),
+        dash.dependencies.Output("tabela-cobertura",      "data"),
+        dash.dependencies.Output("tabela-cobertura",      "columns"),
     ],
     [
         dash.dependencies.Input("resumo-dia-dropdown",        "value"),
@@ -342,6 +411,7 @@ def atualizar_dashboard(resumo_sel, filtro_empresa, filtro_arquivo, tipo_macro, 
             resumo_sel, filtro_empresa, tipo_macro=tipo,
             filtro_fornecedor=filtro_forn, filtro_arquivo=filtro_arquivo,
         )
+        data_cobertura = orchestrator.build_tabela_cobertura()
     except Exception as _e:
         import traceback
         print(f"[ERRO atualizar_dashboard] {_e}")
@@ -349,11 +419,26 @@ def atualizar_dashboard(resumo_sel, filtro_empresa, filtro_arquivo, tipo_macro, 
         data_resumo = []
         data_mensagens = []
         data_arquivos = []
+        data_cobertura = []
 
-    # Sempre exibe combinações CPF+UC inéditas
-    cols_arquivos = [
+    # Colunas da visão geral por arquivo
+    cols_geral = [
+        {"name": "Arquivo",        "id": "arquivo"},
+        {"name": "Data carga",     "id": "data_carga"},
+        {"name": "CPFs no arquivo", "id": "cpfs_no_arquivo"},
+        {"name": "Processados",    "id": "cpfs_processados"},
+        {"name": "Pendentes",      "id": "cpfs_pendentes"},
+        {"name": "Ativos",         "id": "ativos"},
+        {"name": "% Ativos",       "id": "pct_ativos"},
+        {"name": "Inativos",       "id": "inativos"},
+        {"name": "% Inativos",     "id": "pct_inativos"},
+    ]
+
+    # Colunas de inéditos por arquivo
+    cols_ineditos = [
         {"name": "Arquivo",                    "id": "arquivo"},
         {"name": "Data carga",                  "id": "data_carga"},
+        {"name": "CPFs inéditos",               "id": "cpfs_ineditos"},
         {"name": "Combinações CPF+UC inéditas", "id": "ucs_ineditas"},
         {"name": "Processadas",                 "id": "ineditos_processados"},
         {"name": "Pendentes",                   "id": "ineditos_pendentes"},
@@ -363,7 +448,21 @@ def atualizar_dashboard(resumo_sel, filtro_empresa, filtro_arquivo, tipo_macro, 
         {"name": "% Inativas",                  "id": "pct_ineditos_inativos"},
     ]
 
-    return data_resumo, data_mensagens, data_arquivos, cols_arquivos
+    # Colunas de cobertura
+    cols_cobertura = [
+        {"name": "Arquivo",        "id": "arquivo"},
+        {"name": "Data carga",     "id": "data_carga"},
+        {"name": "Total combos",   "id": "total_combos"},
+        {"name": "Novas",          "id": "combos_novas"},
+        {"name": "% Novas",        "id": "pct_novas"},
+        {"name": "Existentes",     "id": "combos_existentes"},
+        {"name": "% Existentes",   "id": "pct_existentes"},
+    ]
+
+    return (data_resumo, data_mensagens,
+            data_arquivos, cols_geral,
+            data_arquivos, cols_ineditos,
+            data_cobertura, cols_cobertura)
 
 
 
