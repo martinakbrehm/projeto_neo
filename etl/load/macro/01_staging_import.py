@@ -138,11 +138,25 @@ def processar_arquivo(conn, filepath: Path, dry_run: bool) -> dict:
     )
     existente = cur.fetchone()
     if existente:
-        print(f"  [SKIP] {filepath.name} já existe no staging "
-              f"(id={existente[0]}, status={existente[1]})")
-        cur.close()
-        return {"staging_id": existente[0], "total": 0, "valid": 0,
-                "invalid": 0, "skipped": True}
+        sid, st = existente
+        if st == "processing":
+            # Crash recovery: limpa importação parcial e reimporta
+            print(f"  [RECOVERY] {filepath.name} está preso em 'processing' "
+                  f"(id={sid}). Limpando para reimportar...")
+            if not dry_run:
+                cur.execute(
+                    "DELETE FROM staging_import_rows WHERE staging_id=%s", (sid,)
+                )
+                cur.execute(
+                    "DELETE FROM staging_imports WHERE id=%s", (sid,)
+                )
+                conn.commit()
+        else:
+            print(f"  [SKIP] {filepath.name} já existe no staging "
+                  f"(id={sid}, status={st})")
+            cur.close()
+            return {"staging_id": sid, "total": 0, "valid": 0,
+                    "invalid": 0, "skipped": True}
 
     print(f"\n  Arquivo : {filepath.name}")
     print(f"  Linhas  : {n_total:,}")
