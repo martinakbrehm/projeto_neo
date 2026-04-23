@@ -1,5 +1,6 @@
 import sys
 import os
+import threading
 import pandas as pd
 sys.path.insert(0, os.path.dirname(__file__))
 
@@ -11,9 +12,13 @@ import dash_auth
 try:
     from .data import loader
     from .service import orchestrator
+    from .refresh_scheduler import executar_refresh
 except ImportError:
     from data import loader
     from service import orchestrator
+    from refresh_scheduler import executar_refresh
+
+REFRESH_INTERVAL_MS = 20 * 60 * 1000  # 20 minutos em milissegundos
 
 COLUMN_LABELS = {
     "dia":        "Data",
@@ -42,10 +47,19 @@ SECTION_TITLE_STYLE = {"fontFamily": "Roboto", "color": "#3949ab", "fontWeight":
 SUBTITLE_STYLE      = {"fontFamily": "Roboto", "color": "#283593", "fontWeight": "700", "fontSize": "16px"}
 
 loader.invalidar_cache("macro")
-_df_inicial             = pd.DataFrame()  # Não carregar dados iniciais para performance
+_df_inicial             = pd.DataFrame()
 _opcoes_dia_inicial     = []
 _opcoes_empresa_inicial = []
 _opcoes_arquivo_inicial = []
+
+# Refresh inicial das tabelas materializadas (em background para não bloquear startup)
+def _refresh_bg():
+    try:
+        executar_refresh()
+    except Exception as e:
+        print(f"[WARN] Refresh inicial falhou: {e}")
+
+threading.Thread(target=_refresh_bg, daemon=True).start()
 
 
 @app.server.before_request
@@ -241,55 +255,10 @@ app.layout = html.Div([
 
     ], style={"background": "#e8eaf6", "padding": "28px", "borderRadius": "10px", "marginBottom": "18px"})),
 
-    # Card: Cobertura — carregamento independente (loading próprio)
-    dcc.Loading(type="dot", color="#1565c0", children=
-        html.Div([
-            html.H3("Cobertura dos arquivos — combinações CPF+UC novas vs existentes",
-                    style={**SUBTITLE_STYLE, "marginTop": "0", "marginBottom": "6px"}),
-            html.Div([
-                html.Span("ℹ Legenda: ",
-                          style={"fontWeight": "bold", "color": "#1565c0", "fontSize": "13px"}),
-                html.Span(
-                    "A unidade de contagem é a combinação única CPF + UC. "
-                    "Um mesmo CPF com UCs diferentes gera combinações distintas e todas são contadas. "
-                    "Linhas sem UC preenchida são excluídas do cálculo. "
-                    "\"Nova\" = par CPF+UC que aparece pela primeira vez em qualquer arquivo do sistema; "
-                    "\"Existente\" = par CPF+UC já visto em um arquivo anterior.",
-                    style={"fontSize": "13px", "color": "#555"}),
-            ], style={"background": "#e3f2fd", "border": "1px solid #90caf9",
-                      "borderRadius": "6px", "padding": "8px 12px", "marginBottom": "10px"}),
-            dash_table.DataTable(
-                id="tabela-cobertura",
-                columns=[
-                    {"name": "Arquivo",                  "id": "arquivo"},
-                    {"name": "Data carga",               "id": "data_carga"},
-                    {"name": "Total combinações",        "id": "total_combos"},
-                    {"name": "Novas",                    "id": "combos_novas"},
-                    {"name": "% novas",                  "id": "pct_novas"},
-                    {"name": "Existentes",               "id": "combos_existentes"},
-                    {"name": "% existentes",             "id": "pct_existentes"},
-                ],
-                data=[],
-                style_table={"overflowX": "auto", "borderRadius": "8px",
-                             "boxShadow": "0 2px 8px #e0e0e0", "marginTop": "4px"},
-                style_cell={"textAlign": "center", "fontFamily": "Roboto", "fontSize": "14px",
-                            "padding": "8px", "whiteSpace": "normal", "height": "auto"},
-                style_cell_conditional=[
-                    {"if": {"column_id": "arquivo"}, "textAlign": "left", "minWidth": "220px"},
-                ],
-                style_header={"backgroundColor": "#1565c0", "color": "white",
-                               "fontWeight": "bold", "fontFamily": "Roboto", "fontSize": "14px"},
-                style_data_conditional=[
-                    {"if": {"row_index": "odd"}, "backgroundColor": "#e3f2fd"},
-                ],
-                page_size=15,
-            ),
-        ], style={"background": "#fff", "borderRadius": "8px", "boxShadow": "0 2px 8px #e0e0e0",
-                  "padding": "16px", "marginBottom": "18px",
-                  "background": "#e8eaf6", "padding": "28px", "borderRadius": "10px"})
-    ),
-
     html.Div(style={"height": "8px"}),
+
+    # Auto-refresh a cada 20 minutos
+    dcc.Interval(id="interval-refresh", interval=REFRESH_INTERVAL_MS, n_intervals=0),
 
 ], style={"maxWidth": "1100px", "margin": "0 auto", "fontFamily": "Roboto",
           "background": "#f0f2f8", "padding": "16px 0"})
@@ -312,12 +281,18 @@ app.layout = html.Div([
     [
         dash.dependencies.Input("selector-tipo-macro",  "value"),
         dash.dependencies.Input("selector-fornecedor",  "value"),
+        dash.dependencies.Input("interval-refresh",     "n_intervals"),
     ]
 )
-def atualizar_opcoes_filtros(tipo_macro, fornecedor):
+def atualizar_opcoes_filtros(tipo_macro, fornecedor, n_intervals):
     tipo = tipo_macro or "macro"
     filtro_forn = fornecedor if fornecedor and fornecedor != "todos" else None
-    # Usar dados em cache para performance
+    # Se veio do interval, rodar refresh em background e invalidar cache
+    ctx = dash.callback_context
+    if ctx.triggered and ctx.triggered[0]["prop_id"] == "interval-refresh.n_intervals" and n_intervals > 0:
+        threading.Thread(target=_refresh_bg, daemon=True).start()
+        loader.invalidar_cache("macro")
+        loader.invalidar_cache("stats")
     df = loader.carregar_dados(tipo)
     if df.empty:
         return [], None, [], None, [], None, f"Sem dados para {tipo.upper()}"
@@ -391,18 +366,7 @@ def atualizar_dashboard(resumo_sel, filtro_empresa, filtro_arquivo, tipo_macro, 
     return data_resumo, data_mensagens, data_arquivos, cols_arquivos
 
 
-@app.callback(
-    dash.dependencies.Output("tabela-cobertura", "data"),
-    [
-        dash.dependencies.Input("selector-tipo-macro", "value"),
-        dash.dependencies.Input("selector-fornecedor", "value"),
-    ]
-)
-def atualizar_cobertura(_tipo_macro, _fornecedor):
-    try:
-        return orchestrator.build_tabela_cobertura()
-    except Exception:
-        return []
+
 
 
 @app.server.route("/_debug/data")

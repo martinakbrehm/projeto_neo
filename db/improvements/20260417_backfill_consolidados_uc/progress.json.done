@@ -1,0 +1,117 @@
+{
+  "steps": {
+    "delete_null_uc": {
+      "done": true,
+      "ts": "2026-04-22T10:42:43.734938",
+      "stats": {
+        "deleted": 0
+      }
+    },
+    "enrich": {
+      "done": true,
+      "ts": "2026-04-22T10:44:19.914342",
+      "stats": {
+        "nomes_corrigidos": 0,
+        "dt_nasc_preenchidos": 0,
+        "telefones_inseridos": 0
+      }
+    },
+    "normalize_addr": {
+      "done": true,
+      "ts": "2026-04-22T10:44:20.749703",
+      "stats": {
+        "bairro_null_fix": 0,
+        "numero_null_fix": 0,
+        "cep_norm": 0
+      }
+    },
+    "reimport": {
+      "done": true,
+      "ts": "2026-04-22T14:01:56.993800",
+      "stats": {
+        "staging_valid": 539689,
+        "staging_invalid": 161377,
+        "pendentes_novos": 80841
+      }
+    }
+  },
+  "sources_done": {
+    "processed/historico_normalizado_para_importar.csv": {
+      "ts": "2026-04-22T10:45:00.181636",
+      "valid": 115986,
+      "invalid": 0,
+      "novos": 0,
+      "staging_id": 20
+    },
+    "06-04-2026/35K_20260402_CELP.csv": {
+      "ts": "2026-04-22T10:52:23.168241",
+      "valid": 35000,
+      "invalid": 0,
+      "novos": 2935,
+      "staging_id": 21
+    },
+    "06-04-2026/35K_20260402_COELBA.csv": {
+      "ts": "2026-04-22T10:59:09.653627",
+      "valid": 35000,
+      "invalid": 0,
+      "novos": 2600,
+      "staging_id": 22
+    },
+    "06-04-2026/35K_20260402_COSERN.csv": {
+      "ts": "2026-04-22T11:34:13.647267",
+      "valid": 35000,
+      "invalid": 0,
+      "novos": 14213,
+      "staging_id": 23
+    },
+    "06-04-2026/celpe_final_3103.xlsx": {
+      "ts": "2026-04-22T11:34:28.550188",
+      "valid": 27717,
+      "invalid": 0,
+      "novos": 0,
+      "staging_id": 24
+    },
+    "13-04-2026/20260409_CELP_35K.csv": {
+      "ts": "2026-04-22T11:34:43.266809",
+      "valid": 35000,
+      "invalid": 0,
+      "novos": 0,
+      "staging_id": 25
+    },
+    "13-04-2026/20260409_COELBA_35K.csv": {
+      "ts": "2026-04-22T11:35:05.617076",
+      "valid": 35000,
+      "invalid": 0,
+      "novos": 2,
+      "staging_id": 26
+    },
+    "13-04-2026/20260409_COSERN_35K.csv": {
+      "ts": "2026-04-22T11:35:19.286639",
+      "valid": 35000,
+      "invalid": 0,
+      "novos": 0,
+      "staging_id": 27
+    },
+    "16-04-2026/20260414_CELP_35K.csv": {
+      "ts": "2026-04-22T12:40:43.627906",
+      "valid": 35000,
+      "invalid": 0,
+      "novos": 27380,
+      "staging_id": 28
+    },
+    "16-04-2026/20260414_COELBA_35K.csv": {
+      "ts": "2026-04-22T14:01:20.509583",
+      "valid": 35000,
+      "invalid": 0,
+      "novos": 33711,
+      "staging_id": 29
+    },
+    "16-04-2026/lote_97_resultado_20260415_175523.csv": {
+      "ts": "2026-04-22T14:01:56.993800",
+      "valid": 0,
+      "invalid": 161377,
+      "novos": 0,
+      "staging_id": 31
+    }
+  }
+}

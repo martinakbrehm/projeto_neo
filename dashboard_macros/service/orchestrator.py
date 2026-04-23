@@ -199,7 +199,7 @@ def build_tabela_arquivos() -> list:
         lambda r: f"{round(r['ineditos_inativos'] / r['ined_total_proc'] * 100, 1)}%" if r["ined_total_proc"] > 0 else "-",
         axis=1,
     )
-    df["ineditos_pendentes"] = df["cpfs_ineditos"] - df["ineditos_processados"]
+    df["ineditos_pendentes"] = (df["cpfs_ineditos"] - df["ineditos_ativos"] - df["ineditos_inativos"]).clip(lower=0)
 
     df["data_carga"] = df["data_carga"].astype(str)
 

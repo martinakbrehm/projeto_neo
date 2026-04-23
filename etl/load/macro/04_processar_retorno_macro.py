@@ -71,7 +71,7 @@ SQL_INSERT_RESULTADO = """
          data_inic_parc, qtd_parcelas, valor_parcelas,
          data_criacao, data_extracao, data_update)
     SELECT
-        cliente_id, distribuidora_id, cliente_uc_id,
+        cliente_id, distribuidora_id, COALESCE(%s, cliente_uc_id),
         %s, %s, 0,
         qtd_faturas, valor_debito, valor_credito,
         data_inic_parc, qtd_parcelas, valor_parcelas,
@@ -165,6 +165,77 @@ def normalizar_uc(val) -> str:
     return digits.zfill(10) if digits else ""
 
 
+def _resolver_cliente_uc_ids(
+    cur, uc_por_macro_id: dict[int, str]
+) -> dict[int, int | None]:
+    """
+    Resolve macro_id → cliente_uc.id a partir da UC que foi efetivamente consultada.
+
+    Garante que o INSERT do resultado grave o cliente_uc_id correto,
+    mesmo quando o registro original tinha cliente_uc_id = NULL.
+    """
+    ids = [mid for mid, uc in uc_por_macro_id.items() if uc]
+    if not ids:
+        return {}
+
+    # Buscar (cliente_id, distribuidora_id) dos registros originais
+    ph = ",".join(["%s"] * len(ids))
+    cur.execute(
+        f"SELECT id, cliente_id, distribuidora_id FROM tabela_macros WHERE id IN ({ph})",
+        ids,
+    )
+    tm_info = {r[0]: (r[1], r[2]) for r in cur.fetchall()}
+
+    # Montar bulk lookup via temp table
+    lookups = []
+    for mid in ids:
+        info = tm_info.get(mid)
+        uc = uc_por_macro_id.get(mid, "")
+        if info and uc:
+            lookups.append((mid, info[0], info[1], uc))
+
+    if not lookups:
+        return {}
+
+    cur.execute(
+        "CREATE TEMPORARY TABLE IF NOT EXISTS _tmp_resolve_uc ("
+        "  macro_id INT NOT NULL PRIMARY KEY,"
+        "  cliente_id INT NOT NULL,"
+        "  distribuidora_id TINYINT UNSIGNED NOT NULL,"
+        "  uc CHAR(10) NOT NULL"
+        ")"
+    )
+    cur.execute("TRUNCATE TABLE _tmp_resolve_uc")
+
+    for i in range(0, len(lookups), BATCH):
+        chunk = lookups[i:i + BATCH]
+        ph_vals = ",".join(["(%s,%s,%s,%s)"] * len(chunk))
+        flat = [v for t in chunk for v in t]
+        cur.execute(
+            f"INSERT INTO _tmp_resolve_uc VALUES {ph_vals}", flat
+        )
+
+    cur.execute(
+        "SELECT t.macro_id, cu.id "
+        "FROM _tmp_resolve_uc t "
+        "JOIN cliente_uc cu "
+        "  ON cu.cliente_id       = t.cliente_id "
+        " AND cu.distribuidora_id = t.distribuidora_id "
+        " AND cu.uc               = t.uc"
+    )
+    resolved = {r[0]: r[1] for r in cur.fetchall()}
+
+    cur.execute("DROP TEMPORARY TABLE IF EXISTS _tmp_resolve_uc")
+
+    n = len(resolved)
+    m = len(ids) - n
+    if m:
+        print(f"  [AVISO] {m:,} registros sem cliente_uc_id (UC nao encontrada em cliente_uc)")
+    print(f"  [OK] {n:,}/{len(ids):,} registros com cliente_uc_id resolvido via lote_meta")
+
+    return resolved
+
+
 def processar(conn, df_resultado: pd.DataFrame, meta: dict, dry_run: bool) -> dict:
     cur = conn.cursor()
     idx = construir_indice_meta(meta)
@@ -205,8 +276,8 @@ def processar(conn, df_resultado: pd.DataFrame, meta: dict, dry_run: bool) -> di
     # Isso garante: se qualquer UC confirmar titularidade → consolidado.
     STATUS_PRIORIDADE = {"consolidado": 3, "reprocessar": 2, "excluido": 1, "pendente": 0}
 
-    # macro_id → (melhor_status, resposta_id_do_melhor)
-    melhor_por_id: dict[int, tuple[str, int]] = {}
+    # macro_id → (melhor_status, resposta_id_do_melhor, uc_consultada)
+    melhor_por_id: dict[int, tuple[str, int, str]] = {}
 
     for _, row in df_resultado.iterrows():
         cpf_norm = normalizar_cpf(row.get(col_cpf, "")) if col_cpf else ""
@@ -223,23 +294,28 @@ def processar(conn, df_resultado: pd.DataFrame, meta: dict, dry_run: bool) -> di
         # Mantém o resultado de maior prioridade para este macro_id
         atual = melhor_por_id.get(macro_id)
         if atual is None or STATUS_PRIORIDADE.get(novo_status, 0) > STATUS_PRIORIDADE.get(atual[0], 0):
-            melhor_por_id[macro_id] = (novo_status, resposta_id)
+            melhor_por_id[macro_id] = (novo_status, resposta_id, uc_norm)
 
     # ── Consolidar stats e preparar updates (um por macro_id) ──────────────
     ids_processados: set[int] = set()
     pendentes_update: list[tuple] = []
 
-    for macro_id, (novo_status, resposta_id) in melhor_por_id.items():
+    for macro_id, (novo_status, resposta_id, _uc) in melhor_por_id.items():
         stats[novo_status] = stats.get(novo_status, 0) + 1
         pendentes_update.append((novo_status, resposta_id, macro_id))
         ids_processados.add(macro_id)
+
+    # ── Resolver cliente_uc_id a partir da UC efetivamente consultada ──────
+    uc_vencedora = {mid: info[2] for mid, info in melhor_por_id.items()}
+    uc_resolvido = _resolver_cliente_uc_ids(cur, uc_vencedora)
 
     # ── Inserir resultados (novo registro) + reverter originais ────────────
     if not dry_run:
         for i in range(0, len(pendentes_update), BATCH):
             lote = pendentes_update[i:i + BATCH]  # (novo_status, resposta_id, macro_id)
             for novo_status, resposta_id, macro_id in lote:
-                cur.execute(SQL_INSERT_RESULTADO, (resposta_id, novo_status, macro_id))
+                uc_id = uc_resolvido.get(macro_id)
+                cur.execute(SQL_INSERT_RESULTADO, (uc_id, resposta_id, novo_status, macro_id))
                 cur.execute(SQL_REVERT_PARA_PENDENTE, (macro_id,))
             conn.commit()
 
@@ -335,13 +411,17 @@ def main():
 
         arquivar(args.dry_run)
 
-        if not args.dry_run:
-            print("\nAtualizando tabela materializada do dashboard...")
-            try:
-                from dashboard_macros.data.loader import refresh_dashboard_macros_agg
-                refresh_dashboard_macros_agg()
-            except Exception as e:
-                print(f"[AVISO] Falha ao atualizar tabela do dashboard: {e}")
+        # NOTE: refresh automático das tabelas agregadas desabilitado temporariamente
+        #       (causava erros durante execução da macro).
+        #       Para atualizar manualmente:
+        #         python -m dashboard_macros.refresh_scheduler --once
+        # if not args.dry_run:
+        #     print("\nAtualizando tabela materializada do dashboard...")
+        #     try:
+        #         from dashboard_macros.data.loader import refresh_dashboard_macros_agg
+        #         refresh_dashboard_macros_agg()
+        #     except Exception as e:
+        #         print(f"[AVISO] Falha ao atualizar tabela do dashboard: {e}")
 
         print(f"\n{SEP}")
         print("PASSO 04 CONCLUIDO")

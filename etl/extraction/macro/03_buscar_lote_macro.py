@@ -76,8 +76,12 @@ SELECT
     COALESCE(co.fornecedor, 'fornecedor2') AS fornecedor
 FROM tabela_macros tm
 JOIN clientes       c  ON c.id  = tm.cliente_id
-JOIN cliente_uc     cu ON cu.cliente_id      = tm.cliente_id
-                       AND cu.distribuidora_id = tm.distribuidora_id
+JOIN cliente_uc     cu ON cu.id = IFNULL(
+    tm.cliente_uc_id,
+    (SELECT MIN(cu2.id) FROM cliente_uc cu2
+     WHERE cu2.cliente_id      = tm.cliente_id
+       AND cu2.distribuidora_id = tm.distribuidora_id)
+)
 JOIN distribuidoras d  ON d.id  = tm.distribuidora_id
 LEFT JOIN cliente_origem co ON co.cliente_id = tm.cliente_id
 WHERE tm.status IN ('pendente', 'reprocessar')
@@ -100,8 +104,12 @@ SELECT
     'fornecedor2'                  AS fornecedor
 FROM tabela_macros tm
 JOIN clientes       c  ON c.id  = tm.cliente_id
-JOIN cliente_uc     cu ON cu.cliente_id      = tm.cliente_id
-                       AND cu.distribuidora_id = tm.distribuidora_id
+JOIN cliente_uc     cu ON cu.id = IFNULL(
+    tm.cliente_uc_id,
+    (SELECT MIN(cu2.id) FROM cliente_uc cu2
+     WHERE cu2.cliente_id      = tm.cliente_id
+       AND cu2.distribuidora_id = tm.distribuidora_id)
+)
 JOIN distribuidoras d  ON d.id  = tm.distribuidora_id
 WHERE tm.status IN ('pendente', 'reprocessar')
 ORDER BY

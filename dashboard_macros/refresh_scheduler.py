@@ -150,18 +150,80 @@ def limpar_queries_orfas() -> int:
 # Funções de refresh (isoladas com tratamento de erro completo)
 # ---------------------------------------------------------------------------
 def refresh_macros() -> bool:
-    """Atualiza dashboard_macros_agg via stored procedure."""
+    """Atualiza dashboard_macros_agg via queries diretas (sem SP).
+
+    Usa temp table InnoDB ao invés de MEMORY para suportar >500k CPFs
+    sem estourar max_heap_table_size do RDS.
+    """
     import pymysql
 
     log.info("Iniciando refresh de dashboard_macros_agg...")
     t0 = time.time()
     try:
-        conn = pymysql.connect(**DB_CONFIG, connect_timeout=10, read_timeout=120)
-        with conn.cursor() as cur:
-            cur.execute("CALL sp_refresh_dashboard_macros_agg()")
-            conn.commit()
-            cur.execute("SELECT COUNT(*) FROM dashboard_macros_agg")
-            n = cur.fetchone()[0]
+        conn = pymysql.connect(**DB_CONFIG, connect_timeout=10, read_timeout=600,
+                               write_timeout=600)
+        cur = conn.cursor()
+        cur.execute("SET SESSION innodb_lock_wait_timeout = 300")
+        cur.execute("SET SESSION lock_wait_timeout = 300")
+
+        # 1. Temp table: CPF → arquivo mais recente (InnoDB, não MEMORY)
+        cur.execute("DROP TEMPORARY TABLE IF EXISTS tmp_cpf_arquivo")
+        cur.execute("""
+            CREATE TEMPORARY TABLE tmp_cpf_arquivo (
+                cpf      CHAR(11)     NOT NULL,
+                filename VARCHAR(255) NOT NULL,
+                PRIMARY KEY (cpf)
+            ) ENGINE=InnoDB
+        """)
+        cur.execute("""
+            INSERT INTO tmp_cpf_arquivo (cpf, filename)
+            SELECT sub.normalized_cpf, si.filename
+            FROM (
+                SELECT normalized_cpf, MAX(staging_id) AS latest_staging_id
+                FROM staging_import_rows
+                WHERE validation_status = 'valid'
+                GROUP BY normalized_cpf
+            ) sub
+            JOIN staging_imports si ON si.id = sub.latest_staging_id
+        """)
+        conn.commit()
+
+        # 2. Truncate + INSERT agregado
+        cur.execute("TRUNCATE TABLE dashboard_macros_agg")
+        conn.commit()
+
+        cur.execute("""
+            INSERT INTO dashboard_macros_agg
+                (dia, status, mensagem, resposta_status, empresa, fornecedor, arquivo_origem, qtd)
+            SELECT
+                DATE(COALESCE(m.data_extracao, m.data_update)) AS dia,
+                m.status,
+                r.mensagem,
+                r.status AS resposta_status,
+                d.nome AS empresa,
+                COALESCE(co.fornecedor, 'fornecedor2') AS fornecedor,
+                COALESCE(ta.filename, 'Dados históricos') AS arquivo_origem,
+                COUNT(*) AS qtd
+            FROM tabela_macros m
+            LEFT JOIN respostas r ON r.id = m.resposta_id
+            LEFT JOIN distribuidoras d ON d.id = m.distribuidora_id
+            LEFT JOIN cliente_origem co ON co.cliente_id = m.cliente_id
+            LEFT JOIN clientes cl ON cl.id = m.cliente_id
+            LEFT JOIN tmp_cpf_arquivo ta ON ta.cpf = cl.cpf
+            WHERE m.status != 'pendente'
+              AND m.resposta_id IS NOT NULL
+            GROUP BY
+                DATE(COALESCE(m.data_extracao, m.data_update)),
+                m.status, r.mensagem, r.status, d.nome,
+                COALESCE(co.fornecedor, 'fornecedor2'),
+                COALESCE(ta.filename, 'Dados históricos')
+        """)
+        conn.commit()
+
+        cur.execute("SELECT COUNT(*) FROM dashboard_macros_agg")
+        n = cur.fetchone()[0]
+
+        cur.execute("DROP TEMPORARY TABLE IF EXISTS tmp_cpf_arquivo")
         conn.close()
         elapsed = time.time() - t0
         log.info(f"dashboard_macros_agg OK: {n} linhas em {elapsed:.1f}s")
@@ -305,8 +367,16 @@ def refresh_arquivos() -> bool:
             cpfs_processados = ativos = inativos = 0
             ineditos_proc = ineditos_at = ineditos_inat = 0
 
-            if pd.notna(dist_id):
-                status_arq = status_df[status_df["distribuidora_id"] == int(dist_id)]
+            # Suporte a multi-distribuidora (ex: "1,2,3")
+            dist_ids = []
+            dist_nome = str(arq["distribuidora_nome"]) if pd.notna(arq["distribuidora_nome"]) else ""
+            if "," in dist_nome:
+                dist_ids = [int(x.strip()) for x in dist_nome.split(",") if x.strip().isdigit()]
+            elif pd.notna(dist_id):
+                dist_ids = [int(dist_id)]
+
+            if dist_ids:
+                status_arq = status_df[status_df["distribuidora_id"].isin(dist_ids)]
                 sub_status = sub.merge(
                     status_arq[["cpf", "status"]],
                     left_on="normalized_cpf", right_on="cpf", how="left"
@@ -556,13 +626,15 @@ def refresh_cobertura() -> bool:
         conn.commit()
 
         # Popula cobertura — contagem exclusiva por combinação CPF+UC
+        # Agrupa por filename (não por si.id) para evitar duplicatas quando
+        # o mesmo arquivo foi importado em múltiplos staging_imports.
         cur.execute("DELETE FROM dashboard_cobertura_agg")
         cur.execute("""
             INSERT INTO dashboard_cobertura_agg
                 (arquivo, data_carga, total_combos, combos_novas, combos_existentes)
             SELECT
                 si.filename                                                           AS arquivo,
-                DATE(si.created_at)                                                   AS data_carga,
+                DATE(MIN(si.created_at))                                              AS data_carga,
                 COUNT(DISTINCT CONCAT(sir.normalized_cpf, '|', sir.normalized_uc))   AS total_combos,
                 COUNT(DISTINCT CASE
                     WHEN cf.first_staging_id = si.id
@@ -581,8 +653,8 @@ def refresh_cobertura() -> bool:
             LEFT JOIN tmp_cob_combo_first cf
                 ON  cf.normalized_cpf = sir.normalized_cpf
                 AND cf.normalized_uc  = sir.normalized_uc
-            GROUP BY si.id, si.filename, DATE(si.created_at)
-            ORDER BY si.id DESC
+            GROUP BY si.filename
+            ORDER BY MIN(si.id) DESC
         """)
         n_final = cur.rowcount
         conn.commit()

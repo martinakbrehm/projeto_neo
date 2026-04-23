@@ -69,7 +69,7 @@ def normalizar_uc(val) -> str | None:
 
 def detectar_distribuidora_id(nome_arquivo: str, df: pd.DataFrame) -> int | None:
     """Detecta distribuidora_id pelo conteúdo da coluna ou pelo nome do arquivo."""
-    for col in ("companhia", "operadora_energia"):
+    for col in ("companhia", "operadora_energia", "lote_nome"):
         if col in df.columns:
             v = df[col].dropna()
             if not v.empty:
