@@ -131,7 +131,15 @@ def processar_arquivo(conn, filepath: Path, dry_run: bool) -> dict:
     df_cols = list(df.columns)
 
     # Checa se este arquivo já foi importado
-    filename_curto = f"{filepath.parent.name}/{filepath.name}"
+    # filename_curto = <pasta_data>/<arquivo>  (ex: 16-04-2026/COELBA_35K.csv)
+    pasta_pai = filepath.parent.name
+    if not re.match(r"^\d{2}-\d{2}-\d{4}$", pasta_pai):
+        print(f"  [ERRO] Pasta pai '{pasta_pai}' não é uma data DD-MM-YYYY. "
+              f"Arquivo ignorado: {filepath.name}")
+        cur.close()
+        return {"staging_id": 0, "total": 0, "valid": 0,
+                "invalid": 0, "skipped": True}
+    filename_curto = f"{pasta_pai}/{filepath.name}"
     cur.execute(
         "SELECT id, status FROM staging_imports WHERE filename=%s LIMIT 1",
         (filename_curto,),
