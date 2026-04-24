@@ -120,16 +120,16 @@ def refresh_dashboard_macros_agg() -> bool:
 # ---------------------------------------------------------------------------
 _SQL_STATS_ARQUIVO_MAT = """
     SELECT arquivo, data_carga, cpfs_no_arquivo, cpfs_processados, ativos, inativos,
-           cpfs_ineditos, ucs_ineditas, combos_processadas, combos_ativas, combos_inativas,
+           cpfs_ineditos, ucs_ineditas, combos_processadas, combos_ativas,
+           combos_excluidas, combos_reprocessar,
            ineditos_processados, ineditos_ativos, ineditos_inativos
     FROM dashboard_arquivos_agg
     ORDER BY data_carga DESC
-    LIMIT 15
 """
 
 
 def carregar_stats_por_arquivo() -> pd.DataFrame:
-    """Retorna estatísticas dos últimos 15 arquivos de staging.
+    """Retorna estatísticas de todos os arquivos de staging.
     Lê da tabela materializada dashboard_arquivos_agg (SELECT simples).
     Cacheado em memória por _CACHE_STATS_TTL segundos.
     """
@@ -147,7 +147,10 @@ def carregar_stats_por_arquivo() -> pd.DataFrame:
             rows = cur.fetchall()
         conn.close()
         df = pd.DataFrame(rows, columns=cols)
-        _CACHE_STATS["stats"] = (df, time.time())
+        # Não cachear DataFrames vazios — podem ser resultado de race condition
+        # com o refresh (TRUNCATE + INSERT) da stored procedure
+        if not df.empty:
+            _CACHE_STATS["stats"] = (df, time.time())
         return df.copy()
     except Exception as e:
         print(f"[ERRO] carregar_stats_por_arquivo: {e}")
@@ -177,7 +180,9 @@ def carregar_cobertura() -> pd.DataFrame:
             rows = cur.fetchall()
         conn.close()
         df = pd.DataFrame(rows, columns=cols)
-        _CACHE_STATS["cobertura"] = (df, time.time())
+        # Não cachear DataFrames vazios — race condition com TRUNCATE
+        if not df.empty:
+            _CACHE_STATS["cobertura"] = (df, time.time())
         return df.copy()
     except Exception as e:
         print(f"[ERRO] carregar_cobertura: {e}")

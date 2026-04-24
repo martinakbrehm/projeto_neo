@@ -54,6 +54,11 @@ _opcoes_arquivo_inicial = []
 # Refresh inicial das tabelas materializadas (em background para não bloquear startup)
 def _refresh_bg():
     try:
+        # Pré-carregar dados existentes no cache ANTES do refresh
+        # para que o dashboard mostre dados mesmo durante o TRUNCATE+INSERT das SPs
+        loader.carregar_dados("macro")
+        loader.carregar_stats_por_arquivo()
+        loader.carregar_cobertura()
         executar_refresh()
     except Exception as e:
         print(f"[WARN] Refresh inicial falhou: {e}")
@@ -83,25 +88,8 @@ app.layout = html.Div([
                 style={**TITLE_STYLE, "display": "inline-block", "verticalAlign": "middle", "margin": 0}),
     ], style={"display": "flex", "alignItems": "center", "marginBottom": "16px", "marginTop": "16px"}),
 
-    # Seletor Macro / API
-    html.Div([
-        html.Label("Selecionar macro:", style={"fontWeight": "700", "fontSize": "14px",
-                                               "marginRight": "12px", "color": "#1a237e"}),
-        dcc.RadioItems(
-            id="selector-tipo-macro",
-            options=[
-                {"label": "  Macro", "value": "macro"},
-                {"label": "  API  (em breve)", "value": "api"},
-            ],
-            value="macro",
-            inline=True,
-            inputStyle={"marginRight": "6px", "cursor": "pointer"},
-            labelStyle={"marginRight": "24px", "fontFamily": "Roboto", "fontSize": "15px",
-                        "fontWeight": "600", "cursor": "pointer"},
-        ),
-    ], style={"background": "#e8eaf6", "padding": "10px 16px", "borderRadius": "8px",
-              "marginBottom": "8px", "display": "flex", "alignItems": "center",
-              "boxShadow": "0 1px 4px rgba(26,35,126,0.10)"}),
+    # Tipo fixo = macro (hidden store para compatibilidade)
+    dcc.Store(id="selector-tipo-macro", data="macro"),
 
     # Seletor Fornecedor
     html.Div([
@@ -130,15 +118,27 @@ app.layout = html.Div([
     # Filtros
     html.Div([
         html.Div([
-            html.Label("Filtrar dias", style={"fontWeight": "700", "fontSize": "13px",
+            html.Label("Filtrar m\u00eas", style={"fontWeight": "700", "fontSize": "13px",
+                                              "marginBottom": "6px", "display": "block", "color": "#1a237e"}),
+            dcc.Dropdown(
+                id="filtro-mes-dropdown",
+                options=[],
+                multi=True, clearable=True, placeholder="Todos os meses",
+                style={"width": "100%"},
+            ),
+        ], style={"flex": "0.7", "minWidth": "180px", "background": "#fff", "padding": "10px",
+                  "borderRadius": "8px", "boxShadow": "0 1px 6px rgba(44,62,80,0.06)"}),
+
+        html.Div([
+            html.Label("Filtrar dia", style={"fontWeight": "700", "fontSize": "13px",
                                               "marginBottom": "6px", "display": "block", "color": "#1a237e"}),
             dcc.Dropdown(
                 id="resumo-dia-dropdown",
-                options=[{"label": str(d), "value": str(d)} for d in _opcoes_dia_inicial],
-                multi=True, clearable=True, placeholder="Todas as datas",
+                options=[],
+                multi=True, clearable=True, placeholder="Todos os dias",
                 style={"width": "100%"},
             ),
-        ], style={"flex": "1", "minWidth": "260px", "background": "#fff", "padding": "10px",
+        ], style={"flex": "0.7", "minWidth": "180px", "background": "#fff", "padding": "10px",
                   "borderRadius": "8px", "boxShadow": "0 1px 6px rgba(44,62,80,0.06)"}),
 
         html.Div([
@@ -225,13 +225,13 @@ app.layout = html.Div([
 
         # Card: Resultados por arquivo carregado — Visao Geral
         html.Div([
-            html.H3("Resultados por arquivo carregado — Visão Geral",
+            html.H3("Resultados por arquivo carregado",
                     style={**SUBTITLE_STYLE, "marginTop": "0", "marginBottom": "6px"}),
             html.P(
                 "Total = combinações CPF+UC inéditas no arquivo (primeira aparição). "
-                "Processadas = combos que já rodaram na macro. "
-                "Pendentes = combos aguardando processamento. "
-                "Ativos/Inativos = resultado entre as combos processadas.",
+                "Processadas = combos que já rodaram na macro (consolidado + excluído + reprocessar). "
+                "Pendentes = combos que nunca rodaram. "
+                "Ativas = contrato confirmado. Excluídas = inativas. Reprocessar = vai rodar novamente.",
                 style={"fontSize": "13px", "color": "#555", "marginBottom": "10px",
                        "background": "#e3f2fd", "padding": "8px 14px", "borderRadius": "6px",
                        "borderLeft": "4px solid #1565c0"},
@@ -242,17 +242,23 @@ app.layout = html.Div([
                 data=[],
                 style_table={"overflowX": "auto", "borderRadius": "8px",
                              "boxShadow": "0 2px 8px #e0e0e0", "marginTop": "4px"},
-                style_cell={"textAlign": "center", "fontFamily": "Roboto", "fontSize": "14px",
-                            "padding": "8px", "whiteSpace": "normal", "height": "auto"},
+                style_cell={"textAlign": "center", "fontFamily": "Roboto", "fontSize": "13px",
+                            "padding": "7px 5px", "whiteSpace": "normal", "height": "auto",
+                            "minWidth": "55px", "maxWidth": "120px"},
                 style_cell_conditional=[
-                    {"if": {"column_id": "arquivo"}, "textAlign": "left"},
+                    {"if": {"column_id": "arquivo"}, "textAlign": "left", "minWidth": "160px", "maxWidth": "220px"},
+                    {"if": {"column_id": "data_carga"}, "minWidth": "80px", "maxWidth": "90px"},
+                    {"if": {"column_id": "pct_combos_ativas"}, "minWidth": "50px", "maxWidth": "65px"},
+                    {"if": {"column_id": "pct_combos_excluidas"}, "minWidth": "50px", "maxWidth": "65px"},
+                    {"if": {"column_id": "pct_combos_reprocessar"}, "minWidth": "50px", "maxWidth": "65px"},
                 ],
-                style_header={"backgroundColor": "#1565c0", "color": "white",
-                               "fontWeight": "bold", "fontFamily": "Roboto", "fontSize": "15px"},
+                style_header={"backgroundColor": "#3949ab", "color": "white",
+                               "fontWeight": "bold", "fontFamily": "Roboto", "fontSize": "11px",
+                               "padding": "8px 5px", "whiteSpace": "normal"},
                 style_data_conditional=[
-                    {"if": {"row_index": "odd"}, "backgroundColor": "#e3f2fd"},
+                    {"if": {"row_index": "odd"}, "backgroundColor": "#f3f4ff"},
                 ],
-                page_size=15,
+                page_size=10,
             ),
         ], style={"background": "#fff", "borderRadius": "8px", "boxShadow": "0 2px 8px #e0e0e0",
                   "padding": "16px", "marginBottom": "18px"}),
@@ -265,8 +271,8 @@ app.layout = html.Div([
                 "Combinação nova = par CPF+UC que aparece pela primeira vez considerando todos os arquivos. "
                 "Combinação existente = par CPF+UC já presente em arquivo importado anteriormente.",
                 style={"fontSize": "13px", "color": "#555", "marginBottom": "10px",
-                       "background": "#e8f5e9", "padding": "8px 14px", "borderRadius": "6px",
-                       "borderLeft": "4px solid #2e7d32"},
+                       "background": "#e3f2fd", "padding": "8px 14px", "borderRadius": "6px",
+                       "borderLeft": "4px solid #3949ab"},
             ),
             dash_table.DataTable(
                 id="tabela-cobertura",
@@ -274,17 +280,18 @@ app.layout = html.Div([
                 data=[],
                 style_table={"overflowX": "auto", "borderRadius": "8px",
                              "boxShadow": "0 2px 8px #e0e0e0", "marginTop": "4px"},
-                style_cell={"textAlign": "center", "fontFamily": "Roboto", "fontSize": "14px",
-                            "padding": "8px", "whiteSpace": "normal", "height": "auto"},
+                style_cell={"textAlign": "center", "fontFamily": "Roboto", "fontSize": "13px",
+                            "padding": "7px 5px", "whiteSpace": "normal", "height": "auto"},
                 style_cell_conditional=[
-                    {"if": {"column_id": "arquivo"}, "textAlign": "left"},
+                    {"if": {"column_id": "arquivo"}, "textAlign": "left", "minWidth": "160px", "maxWidth": "220px"},
                 ],
-                style_header={"backgroundColor": "#2e7d32", "color": "white",
-                               "fontWeight": "bold", "fontFamily": "Roboto", "fontSize": "15px"},
+                style_header={"backgroundColor": "#3949ab", "color": "white",
+                               "fontWeight": "bold", "fontFamily": "Roboto", "fontSize": "11px",
+                               "padding": "8px 5px", "whiteSpace": "normal"},
                 style_data_conditional=[
-                    {"if": {"row_index": "odd"}, "backgroundColor": "#e8f5e9"},
+                    {"if": {"row_index": "odd"}, "backgroundColor": "#f3f4ff"},
                 ],
-                page_size=15,
+                page_size=10,
             ),
         ], style={"background": "#fff", "borderRadius": "8px", "boxShadow": "0 2px 8px #e0e0e0",
                   "padding": "16px", "marginBottom": "18px"}),
@@ -306,6 +313,8 @@ app.layout = html.Div([
 
 @app.callback(
     [
+        dash.dependencies.Output("filtro-mes-dropdown",     "options"),
+        dash.dependencies.Output("filtro-mes-dropdown",     "value"),
         dash.dependencies.Output("resumo-dia-dropdown",     "options"),
         dash.dependencies.Output("resumo-dia-dropdown",     "value"),
         dash.dependencies.Output("filtro-empresa-dropdown", "options"),
@@ -315,13 +324,13 @@ app.layout = html.Div([
         dash.dependencies.Output("info-registros",          "children"),
     ],
     [
-        dash.dependencies.Input("selector-tipo-macro",  "value"),
+        dash.dependencies.Input("selector-tipo-macro",  "data"),
         dash.dependencies.Input("selector-fornecedor",  "value"),
         dash.dependencies.Input("interval-refresh",     "n_intervals"),
     ]
 )
 def atualizar_opcoes_filtros(tipo_macro, fornecedor, n_intervals):
-    tipo = tipo_macro or "macro"
+    tipo = "macro"
     filtro_forn = fornecedor if fornecedor and fornecedor != "todos" else None
     # Se veio do interval, rodar refresh em background (cache será invalidado ao final do refresh)
     ctx = dash.callback_context
@@ -329,15 +338,30 @@ def atualizar_opcoes_filtros(tipo_macro, fornecedor, n_intervals):
         threading.Thread(target=_refresh_bg, daemon=True).start()
     df = loader.carregar_dados(tipo)
     if df.empty:
-        # Se o cache está vazio, tenta recarregar sem cache (o refresh pode ter acabado)
         loader.invalidar_cache(tipo)
         df = loader.carregar_dados(tipo)
     if df.empty:
-        return [], None, [], None, [], None, f"Sem dados para {tipo.upper()} (aguardando refresh...)"
+        return [], None, [], None, [], None, [], None, f"Sem dados para {tipo.upper()} (aguardando refresh...)"
     dff = df[df["fornecedor"] == filtro_forn] if filtro_forn and "fornecedor" in df.columns else df
     opcoes_dia     = sorted(dff["dia"].dropna().unique())
     opcoes_empresa = sorted(dff["empresa"].dropna().unique()) if "empresa" in dff.columns else []
     opcoes_arquivo = sorted(dff["arquivo_origem"].dropna().unique()) if "arquivo_origem" in dff.columns else []
+
+    # Gerar opções de mês-ano a partir dos dias disponíveis
+    meses_vistos = {}
+    for d in opcoes_dia:
+        ds = str(d)
+        if len(ds) >= 7:
+            chave_mes = ds[:7]  # "2026-04"
+            if chave_mes not in meses_vistos:
+                try:
+                    mes_num = int(chave_mes[5:7])
+                    ano = chave_mes[:4]
+                    meses_vistos[chave_mes] = f"{mes_num:02d}/{ano}"
+                except ValueError:
+                    pass
+    opcoes_dropdown_mes = [{"label": meses_vistos[k], "value": k} for k in sorted(meses_vistos.keys())]
+
     label_forn = f" | Fornecedor: {filtro_forn}" if filtro_forn else ""
     info = (
         f"Registros: {len(dff):,}  |  "
@@ -347,6 +371,8 @@ def atualizar_opcoes_filtros(tipo_macro, fornecedor, n_intervals):
         f"{label_forn}"
     )
     return (
+        opcoes_dropdown_mes,
+        None,
         [{"label": str(d), "value": str(d)} for d in opcoes_dia],
         None,
         [{"label": str(e), "value": str(e)} for e in opcoes_empresa],
@@ -367,19 +393,29 @@ def atualizar_opcoes_filtros(tipo_macro, fornecedor, n_intervals):
         dash.dependencies.Output("tabela-cobertura",      "columns"),
     ],
     [
+        dash.dependencies.Input("filtro-mes-dropdown",        "value"),
         dash.dependencies.Input("resumo-dia-dropdown",        "value"),
         dash.dependencies.Input("filtro-empresa-dropdown",    "value"),
         dash.dependencies.Input("filtro-arquivo-dropdown",    "value"),
-        dash.dependencies.Input("selector-tipo-macro",        "value"),
+        dash.dependencies.Input("selector-tipo-macro",        "data"),
         dash.dependencies.Input("selector-fornecedor",        "value"),
     ]
 )
-def atualizar_dashboard(resumo_sel, filtro_empresa, filtro_arquivo, tipo_macro, fornecedor):
-    tipo = tipo_macro or "macro"
+def atualizar_dashboard(filtro_mes, resumo_sel, filtro_empresa, filtro_arquivo, tipo_macro, fornecedor):
+    tipo = "macro"
     filtro_forn = fornecedor if fornecedor and fornecedor != "todos" else None
+    # Combinar filtros de m\u00eas e dia numa lista \u00fanica para o orchestrator
+    filtro_datas_combinado = []
+    if filtro_mes:
+        for m in (filtro_mes if isinstance(filtro_mes, list) else [filtro_mes]):
+            filtro_datas_combinado.append(f"mes:{m}")
+    if resumo_sel:
+        for d in (resumo_sel if isinstance(resumo_sel, list) else [resumo_sel]):
+            filtro_datas_combinado.append(str(d))
     try:
         data_resumo, data_mensagens, data_arquivos = orchestrator.build_dashboard_data(
-            resumo_sel, filtro_empresa, tipo_macro=tipo,
+            filtro_datas_combinado if filtro_datas_combinado else None,
+            filtro_empresa, tipo_macro=tipo,
             filtro_fornecedor=filtro_forn, filtro_arquivo=filtro_arquivo,
         )
         data_cobertura = orchestrator.build_tabela_cobertura()
@@ -397,13 +433,15 @@ def atualizar_dashboard(resumo_sel, filtro_empresa, filtro_arquivo, tipo_macro, 
         {"name": "Arquivo",           "id": "arquivo"},
         {"name": "Data carga",        "id": "data_carga"},
         {"name": "CPFs no arquivo",   "id": "cpfs_no_arquivo"},
-        {"name": "Combos inéditas",   "id": "ucs_ineditas"},
+        {"name": "Combinações inéditas", "id": "ucs_ineditas"},
         {"name": "Processadas",       "id": "combos_processadas"},
         {"name": "Pendentes",         "id": "combos_pendentes"},
         {"name": "Ativas",            "id": "combos_ativas"},
         {"name": "% Ativas",          "id": "pct_combos_ativas"},
-        {"name": "Inativas",          "id": "combos_inativas"},
-        {"name": "% Inativas",        "id": "pct_combos_inativas"},
+        {"name": "Excluídas",         "id": "combos_excluidas"},
+        {"name": "% Excluídas",       "id": "pct_combos_excluidas"},
+        {"name": "Reprocessar",       "id": "combos_reprocessar"},
+        {"name": "% Reprocessar",     "id": "pct_combos_reprocessar"},
     ]
 
     # Colunas de cobertura

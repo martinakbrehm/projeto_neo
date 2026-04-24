@@ -50,7 +50,18 @@ def build_dashboard_data(resumo_sel, filtro_empresa,
     # --- filtro de dias ---
     if resumo_sel:
         try:
-            dff = dff[dff["dia"].astype(str).isin(resumo_sel)]
+            # Expandir seleções de mês (ex: "mes:2026-04") para dias individuais
+            dias_expandidos = []
+            for sel in (resumo_sel if isinstance(resumo_sel, list) else [resumo_sel]):
+                s = str(sel)
+                if s.startswith("mes:"):
+                    prefixo = s[4:]  # "2026-04"
+                    dias_do_mes = [str(d) for d in dff["dia"].dropna().unique() if str(d).startswith(prefixo)]
+                    dias_expandidos.extend(dias_do_mes)
+                else:
+                    dias_expandidos.append(s)
+            if dias_expandidos:
+                dff = dff[dff["dia"].astype(str).isin(dias_expandidos)]
         except Exception:
             pass
 
@@ -153,7 +164,7 @@ def build_tabela_arquivos() -> list:
     int_cols = [
         "cpfs_no_arquivo", "cpfs_processados", "ativos", "inativos",
         "cpfs_ineditos", "ucs_ineditas",
-        "combos_processadas", "combos_ativas", "combos_inativas",
+        "combos_processadas", "combos_ativas", "combos_excluidas", "combos_reprocessar",
         "ineditos_processados", "ineditos_ativos", "ineditos_inativos",
     ]
     for col in int_cols:
@@ -168,8 +179,12 @@ def build_tabela_arquivos() -> list:
         lambda r: f"{round(r['combos_ativas'] / r['combos_processadas'] * 100, 1)}%"
         if r["combos_processadas"] > 0 else "-", axis=1,
     )
-    df["pct_combos_inativas"] = df.apply(
-        lambda r: f"{round(r['combos_inativas'] / r['combos_processadas'] * 100, 1)}%"
+    df["pct_combos_excluidas"] = df.apply(
+        lambda r: f"{round(r['combos_excluidas'] / r['combos_processadas'] * 100, 1)}%"
+        if r["combos_processadas"] > 0 else "-", axis=1,
+    )
+    df["pct_combos_reprocessar"] = df.apply(
+        lambda r: f"{round(r['combos_reprocessar'] / r['combos_processadas'] * 100, 1)}%"
         if r["combos_processadas"] > 0 else "-", axis=1,
     )
 
@@ -180,7 +195,8 @@ def build_tabela_arquivos() -> list:
         "cpfs_no_arquivo", "ucs_ineditas",
         "combos_processadas", "combos_pendentes",
         "combos_ativas", "pct_combos_ativas",
-        "combos_inativas", "pct_combos_inativas",
+        "combos_excluidas", "pct_combos_excluidas",
+        "combos_reprocessar", "pct_combos_reprocessar",
     ]].to_dict("records")
 
 
