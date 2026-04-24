@@ -120,7 +120,8 @@ def refresh_dashboard_macros_agg() -> bool:
 # ---------------------------------------------------------------------------
 _SQL_STATS_ARQUIVO_MAT = """
     SELECT arquivo, data_carga, cpfs_no_arquivo, cpfs_processados, ativos, inativos,
-           cpfs_ineditos, ucs_ineditas, ineditos_processados, ineditos_ativos, ineditos_inativos
+           cpfs_ineditos, ucs_ineditas, combos_processadas, combos_ativas, combos_inativas,
+           ineditos_processados, ineditos_ativos, ineditos_inativos
     FROM dashboard_arquivos_agg
     ORDER BY data_carga DESC
     LIMIT 15

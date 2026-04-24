@@ -228,9 +228,10 @@ app.layout = html.Div([
             html.H3("Resultados por arquivo carregado — Visão Geral",
                     style={**SUBTITLE_STYLE, "marginTop": "0", "marginBottom": "6px"}),
             html.P(
-                "CPFs no arquivo = total de CPFs válidos importados. "
-                "Processados = CPFs cujo último status na macro não é 'pendente'. "
-                "Pendentes = ainda aguardando processamento pela macro.",
+                "Total = combinações CPF+UC inéditas no arquivo (primeira aparição). "
+                "Processadas = combos que já rodaram na macro. "
+                "Pendentes = combos aguardando processamento. "
+                "Ativos/Inativos = resultado entre as combos processadas.",
                 style={"fontSize": "13px", "color": "#555", "marginBottom": "10px",
                        "background": "#e3f2fd", "padding": "8px 14px", "borderRadius": "6px",
                        "borderLeft": "4px solid #1565c0"},
@@ -391,17 +392,18 @@ def atualizar_dashboard(resumo_sel, filtro_empresa, filtro_arquivo, tipo_macro, 
         data_arquivos = []
         data_cobertura = []
 
-    # Colunas da visão geral por arquivo
+    # Colunas da visão geral por arquivo (combo-level inéditas)
     cols_geral = [
-        {"name": "Arquivo",        "id": "arquivo"},
-        {"name": "Data carga",     "id": "data_carga"},
-        {"name": "CPFs no arquivo", "id": "cpfs_no_arquivo"},
-        {"name": "Processados",    "id": "cpfs_processados"},
-        {"name": "Pendentes",      "id": "cpfs_pendentes"},
-        {"name": "Ativos",         "id": "ativos"},
-        {"name": "% Ativos",       "id": "pct_ativos"},
-        {"name": "Inativos",       "id": "inativos"},
-        {"name": "% Inativos",     "id": "pct_inativos"},
+        {"name": "Arquivo",           "id": "arquivo"},
+        {"name": "Data carga",        "id": "data_carga"},
+        {"name": "CPFs no arquivo",   "id": "cpfs_no_arquivo"},
+        {"name": "Combos inéditas",   "id": "ucs_ineditas"},
+        {"name": "Processadas",       "id": "combos_processadas"},
+        {"name": "Pendentes",         "id": "combos_pendentes"},
+        {"name": "Ativas",            "id": "combos_ativas"},
+        {"name": "% Ativas",          "id": "pct_combos_ativas"},
+        {"name": "Inativas",          "id": "combos_inativas"},
+        {"name": "% Inativas",        "id": "pct_combos_inativas"},
     ]
 
     # Colunas de cobertura

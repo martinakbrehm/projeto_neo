@@ -140,10 +140,11 @@ def build_dashboard_data(resumo_sel, filtro_empresa,
 
 
 def build_tabela_arquivos() -> list:
-    """Retorna lista de dicts com estatísticas dos últimos 15 arquivos de staging.
+    """Retorna lista de dicts com estatísticas por arquivo.
 
-    Retorna todos os campos (gerais + inéditos). O dashboard alterna entre os
-    dois conjuntos de colunas via seletor.
+    A tabela "Visão Geral" usa como TOTAL as combinações CPF+UC inéditas
+    (mesmas combos_novas da tabela de cobertura). A partir dessas mostra:
+    processadas, pendentes, ativas, inativas — tudo a nível de COMBO.
     """
     df = loader.carregar_stats_por_arquivo()
     if df is None or df.empty:
@@ -152,71 +153,34 @@ def build_tabela_arquivos() -> list:
     int_cols = [
         "cpfs_no_arquivo", "cpfs_processados", "ativos", "inativos",
         "cpfs_ineditos", "ucs_ineditas",
+        "combos_processadas", "combos_ativas", "combos_inativas",
         "ineditos_processados", "ineditos_ativos", "ineditos_inativos",
     ]
     for col in int_cols:
-        df[col] = df[col].fillna(0).astype(int)
+        if col in df.columns:
+            df[col] = df[col].fillna(0).astype(int)
+        else:
+            df[col] = 0
 
-    # Percentuais gerais
-    df["total_proc"] = df["ativos"] + df["inativos"]
-    df["pct_ativos"] = df.apply(
-        lambda r: f"{round(r['ativos'] / r['total_proc'] * 100, 1)}%" if r["total_proc"] > 0 else "-",
-        axis=1,
+    # --- Combo-level (para visão geral) ---
+    df["combos_pendentes"] = (df["ucs_ineditas"] - df["combos_processadas"]).clip(lower=0)
+    df["pct_combos_ativas"] = df.apply(
+        lambda r: f"{round(r['combos_ativas'] / r['combos_processadas'] * 100, 1)}%"
+        if r["combos_processadas"] > 0 else "-", axis=1,
     )
-    df["pct_inativos"] = df.apply(
-        lambda r: f"{round(r['inativos'] / r['total_proc'] * 100, 1)}%" if r["total_proc"] > 0 else "-",
-        axis=1,
+    df["pct_combos_inativas"] = df.apply(
+        lambda r: f"{round(r['combos_inativas'] / r['combos_processadas'] * 100, 1)}%"
+        if r["combos_processadas"] > 0 else "-", axis=1,
     )
-    df["cpfs_pendentes"] = df["cpfs_no_arquivo"] - df["cpfs_processados"]
-
-    # Novos vs. já existentes no banco
-    df["cpfs_ja_existentes"] = (df["cpfs_no_arquivo"] - df["cpfs_ineditos"]).clip(lower=0)
-    df["ucs_ja_existentes"]  = (df["cpfs_no_arquivo"] - df["ucs_ineditas"]).clip(lower=0)
-    df["pct_ineditos_cpf"] = df.apply(
-        lambda r: f"{round(r['cpfs_ineditos'] / r['cpfs_no_arquivo'] * 100, 1)}%" if r["cpfs_no_arquivo"] > 0 else "-",
-        axis=1,
-    )
-    df["pct_existentes_cpf"] = df.apply(
-        lambda r: f"{round(r['cpfs_ja_existentes'] / r['cpfs_no_arquivo'] * 100, 1)}%" if r["cpfs_no_arquivo"] > 0 else "-",
-        axis=1,
-    )
-    df["pct_ineditos_uc"] = df.apply(
-        lambda r: f"{round(r['ucs_ineditas'] / r['cpfs_no_arquivo'] * 100, 1)}%" if r["cpfs_no_arquivo"] > 0 else "-",
-        axis=1,
-    )
-    df["pct_existentes_uc"] = df.apply(
-        lambda r: f"{round(r['ucs_ja_existentes'] / r['cpfs_no_arquivo'] * 100, 1)}%" if r["cpfs_no_arquivo"] > 0 else "-",
-        axis=1,
-    )
-
-    # Percentuais inéditos
-    df["ined_total_proc"] = df["ineditos_ativos"] + df["ineditos_inativos"]
-    df["pct_ineditos_ativos"] = df.apply(
-        lambda r: f"{round(r['ineditos_ativos'] / r['ined_total_proc'] * 100, 1)}%" if r["ined_total_proc"] > 0 else "-",
-        axis=1,
-    )
-    df["pct_ineditos_inativos"] = df.apply(
-        lambda r: f"{round(r['ineditos_inativos'] / r['ined_total_proc'] * 100, 1)}%" if r["ined_total_proc"] > 0 else "-",
-        axis=1,
-    )
-    df["ineditos_pendentes"] = (df["cpfs_ineditos"] - df["ineditos_ativos"] - df["ineditos_inativos"]).clip(lower=0)
 
     df["data_carga"] = df["data_carga"].astype(str)
 
     return df[[
         "arquivo", "data_carga",
-        # Geral
-        "cpfs_no_arquivo", "cpfs_processados", "cpfs_pendentes",
-        "ativos", "pct_ativos", "inativos", "pct_inativos",
-        # Inéditos
-        "cpfs_ineditos", "ucs_ineditas",
-        "ineditos_processados", "ineditos_pendentes",
-        "ineditos_ativos", "pct_ineditos_ativos",
-        "ineditos_inativos", "pct_ineditos_inativos",
-        # Novos vs existentes
-        "cpfs_ja_existentes", "ucs_ja_existentes",
-        "pct_ineditos_cpf", "pct_existentes_cpf",
-        "pct_ineditos_uc", "pct_existentes_uc",
+        "cpfs_no_arquivo", "ucs_ineditas",
+        "combos_processadas", "combos_pendentes",
+        "combos_ativas", "pct_combos_ativas",
+        "combos_inativas", "pct_combos_inativas",
     ]].to_dict("records")
 
 
