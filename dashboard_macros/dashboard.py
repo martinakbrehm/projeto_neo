@@ -46,7 +46,6 @@ TITLE_STYLE         = {"fontFamily": "Roboto", "color": "#1a237e", "fontWeight":
 SECTION_TITLE_STYLE = {"fontFamily": "Roboto", "color": "#3949ab", "fontWeight": "700", "fontSize": "18px"}
 SUBTITLE_STYLE      = {"fontFamily": "Roboto", "color": "#283593", "fontWeight": "700", "fontSize": "16px"}
 
-loader.invalidar_cache("macro")
 _df_inicial             = pd.DataFrame()
 _opcoes_dia_inicial     = []
 _opcoes_empresa_inicial = []
@@ -58,6 +57,10 @@ def _refresh_bg():
         executar_refresh()
     except Exception as e:
         print(f"[WARN] Refresh inicial falhou: {e}")
+    finally:
+        # Invalida TODO o cache para que o próximo callback busque dados frescos
+        loader.invalidar_cache()
+        print("[INFO] Cache invalidado após refresh")
 
 threading.Thread(target=_refresh_bg, daemon=True).start()
 
@@ -352,15 +355,17 @@ app.layout = html.Div([
 def atualizar_opcoes_filtros(tipo_macro, fornecedor, n_intervals):
     tipo = tipo_macro or "macro"
     filtro_forn = fornecedor if fornecedor and fornecedor != "todos" else None
-    # Se veio do interval, rodar refresh em background e invalidar cache
+    # Se veio do interval, rodar refresh em background (cache será invalidado ao final do refresh)
     ctx = dash.callback_context
     if ctx.triggered and ctx.triggered[0]["prop_id"] == "interval-refresh.n_intervals" and n_intervals > 0:
         threading.Thread(target=_refresh_bg, daemon=True).start()
-        loader.invalidar_cache("macro")
-        loader.invalidar_cache("stats")
     df = loader.carregar_dados(tipo)
     if df.empty:
-        return [], None, [], None, [], None, f"Sem dados para {tipo.upper()}"
+        # Se o cache está vazio, tenta recarregar sem cache (o refresh pode ter acabado)
+        loader.invalidar_cache(tipo)
+        df = loader.carregar_dados(tipo)
+    if df.empty:
+        return [], None, [], None, [], None, f"Sem dados para {tipo.upper()} (aguardando refresh...)"
     dff = df[df["fornecedor"] == filtro_forn] if filtro_forn and "fornecedor" in df.columns else df
     opcoes_dia     = sorted(dff["dia"].dropna().unique())
     opcoes_empresa = sorted(dff["empresa"].dropna().unique()) if "empresa" in dff.columns else []

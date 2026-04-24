@@ -69,7 +69,10 @@ def carregar_dados(tipo: str = "macro") -> pd.DataFrame:
             rows = cur.fetchall()
         conn.close()
         df = pd.DataFrame(rows, columns=cols)
-        _CACHE[tipo] = df
+        # Não cachear DataFrames vazios — podem ser resultado de race condition
+        # com o refresh (TRUNCATE + INSERT) da stored procedure
+        if not df.empty:
+            _CACHE[tipo] = df
         return df.copy()
     except Exception as e:
         print(f"[ERRO] Falha ao carregar dados ({tipo}): {e}")
