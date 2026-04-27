@@ -18,7 +18,7 @@ except ImportError:
     from service import orchestrator
     from refresh_scheduler import executar_refresh
 
-REFRESH_INTERVAL_MS = 20 * 60 * 1000  # 20 minutos em milissegundos
+REFRESH_INTERVAL_MS = 2 * 60 * 60 * 1000  # 2 horas em milissegundos
 
 COLUMN_LABELS = {
     "dia":        "Data",
@@ -52,20 +52,41 @@ _opcoes_empresa_inicial = []
 _opcoes_arquivo_inicial = []
 
 # Refresh inicial das tabelas materializadas (em background para não bloquear startup)
-def _refresh_bg():
+# Horários agendados para refresh automático (hora cheia)
+_REFRESH_HORARIOS = {8, 12, 17}
+
+
+def _executar_refresh_once():
+    """Executa um único ciclo de refresh (usado pelo callback do interval e pelo scheduler)."""
     try:
-        # Pré-carregar dados existentes no cache ANTES do refresh
-        # para que o dashboard mostre dados mesmo durante o TRUNCATE+INSERT das SPs
         loader.carregar_dados("macro")
         loader.carregar_stats_por_arquivo()
         loader.carregar_cobertura()
         executar_refresh()
     except Exception as e:
-        print(f"[WARN] Refresh inicial falhou: {e}")
+        print(f"[WARN] Refresh falhou: {e}")
     finally:
-        # Invalida TODO o cache para que o próximo callback busque dados frescos
         loader.invalidar_cache()
         print("[INFO] Cache invalidado após refresh")
+
+
+def _refresh_bg():
+    """Scheduler de refresh: roda às 8h, 12h e 17h. Verifica a cada minuto."""
+    import time as _time
+    from datetime import datetime
+    _ja_rodou = set()  # evita rodar mais de uma vez no mesmo horário
+    while True:
+        agora = datetime.now()
+        chave = (agora.date(), agora.hour)
+        if agora.hour in _REFRESH_HORARIOS and chave not in _ja_rodou:
+            print(f"[INFO] Refresh agendado das {agora.hour}h iniciando...")
+            _ja_rodou.add(chave)
+            _executar_refresh_once()
+        # Limpa chaves de dias anteriores para não crescer indefinidamente
+        hoje = agora.date()
+        _ja_rodou = {c for c in _ja_rodou if c[0] == hoje}
+        _time.sleep(60)  # verifica a cada minuto
+
 
 threading.Thread(target=_refresh_bg, daemon=True).start()
 
@@ -335,7 +356,7 @@ def atualizar_opcoes_filtros(tipo_macro, fornecedor, n_intervals):
     # Se veio do interval, rodar refresh em background (cache será invalidado ao final do refresh)
     ctx = dash.callback_context
     if ctx.triggered and ctx.triggered[0]["prop_id"] == "interval-refresh.n_intervals" and n_intervals > 0:
-        threading.Thread(target=_refresh_bg, daemon=True).start()
+        threading.Thread(target=_executar_refresh_once, daemon=True).start()
     df = loader.carregar_dados(tipo)
     if df.empty:
         loader.invalidar_cache(tipo)
