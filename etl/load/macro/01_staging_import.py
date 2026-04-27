@@ -104,6 +104,8 @@ def ler_arquivo(filepath: Path) -> pd.DataFrame:
         df = df.rename(columns={"cpf_consultado": "cpf"})
     if "estado" in df.columns and "uf" not in df.columns:
         df = df.rename(columns={"estado": "uf"})
+    if "contract_account" in df.columns and "uc" not in df.columns:
+        df = df.rename(columns={"contract_account": "uc"})
 
     return df
 

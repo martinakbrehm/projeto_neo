@@ -49,7 +49,7 @@ DISTRIBUIDORA_MAP = {
 
 # resposta_id 6 = 'Aguardando processamento' / status 'pendente'
 RESPOSTA_PENDENTE = 6
-BATCH = 500
+BATCH = 200
 SEP = "=" * 70
 
 
@@ -137,6 +137,8 @@ def ler_arquivo(filepath: Path) -> pd.DataFrame:
         df = df.rename(columns={"cpf_consultado": "cpf"})
     if "estado" in df.columns and "uf" not in df.columns:
         df = df.rename(columns={"estado": "uf"})
+    if "contract_account" in df.columns and "uc" not in df.columns:
+        df = df.rename(columns={"contract_account": "uc"})
     return df
 
 
@@ -157,6 +159,41 @@ def detectar_distribuidora(nome_arquivo: str, df: pd.DataFrame) -> int | None:
 
 def colunas_telefone(df: pd.DataFrame) -> list[str]:
     return [c for c in df.columns if re.match(r"telefone\D*\d+$", c)]
+
+
+# ---------------------------------------------------------------------------
+# Retry helper para deadlocks
+# ---------------------------------------------------------------------------
+import time  # noqa: E402
+
+MAX_DEADLOCK_RETRIES = 5
+RETRIABLE_ERRNOS = {1213, 2013, 2006, 1205}  # deadlock, lost conn, gone away, lock timeout
+
+
+def _executemany_retry(cur_w, conn_w, sql, rows):
+    """Executa executemany com retry automático para deadlocks e erros transitórios."""
+    for tentativa in range(1, MAX_DEADLOCK_RETRIES + 1):
+        try:
+            cur_w.executemany(sql, rows)
+            return
+        except pymysql.err.OperationalError as e:
+            errno = e.args[0] if e.args else 0
+            if errno not in RETRIABLE_ERRNOS or tentativa == MAX_DEADLOCK_RETRIES:
+                raise
+            wait = 2 ** tentativa
+            print(f"    [RETRY] erro {errno} tentativa {tentativa}/{MAX_DEADLOCK_RETRIES}, "
+                  f"aguardando {wait}s...")
+            try:
+                conn_w.rollback()
+            except Exception:
+                pass
+            time.sleep(wait)
+            # Reconectar se a conexão caiu
+            try:
+                conn_w.ping(reconnect=True)
+                cur_w = conn_w.cursor()
+            except Exception:
+                pass
 
 
 # ---------------------------------------------------------------------------
@@ -225,7 +262,12 @@ def processar_staging(conn, staging_id: int, dry_run: bool) -> dict:
     else:
         # filename salvo no formato curto "DD-MM-YYYY/arquivo.csv"
         filepath = ROOT / "dados" / "fornecedor2" / "operacional" / _fp
-    distrib_id_meta = int(row[1]) if row[1] else None
+    distrib_id_meta = None
+    if row[1]:
+        try:
+            distrib_id_meta = int(row[1])
+        except (ValueError, TypeError):
+            distrib_id_meta = None  # e.g. 'multi' para arquivos com várias distribuidoras
 
     # Índices válidos ainda não processados → {row_idx: normalized_cpf}
     cur.execute(
@@ -250,6 +292,7 @@ def processar_staging(conn, staging_id: int, dry_run: bool) -> dict:
 
     cpf_map, uc_map, macros_hoje, tel_set, end_set = carregar_maps(cur)
     cur.close()  # leitura inicial concluída
+    conn.commit()  # libera locks de leitura
 
     data_criacao = datetime.today().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -263,8 +306,8 @@ def processar_staging(conn, staging_id: int, dry_run: bool) -> dict:
         "erros": 0,
     }
 
-    # Conexão de escrita única — sem reconexão por batch (timeout já é 600s)
-    conn_w = conectar()
+    # Usa conexão única para leitura e escrita (evita deadlock entre 2 conns)
+    conn_w = conn
     cur_w  = conn_w.cursor()
 
     # Filtra apenas as linhas válidas
@@ -360,7 +403,7 @@ def processar_staging(conn, staging_id: int, dry_run: bool) -> dict:
         if not dry_run:
             if novos_cpfs:
                 nome_por_cpf = {d["cpf"]: d["nome"] for d in parsed_filtrado}
-                cur_w.executemany(
+                _executemany_retry(cur_w, conn_w,
                     "INSERT IGNORE INTO clientes (cpf, nome, data_criacao)"
                     " VALUES (%s, %s, %s)",
                     [(c, nome_por_cpf[c], data_criacao) for c in novos_cpfs],
@@ -380,7 +423,7 @@ def processar_staging(conn, staging_id: int, dry_run: bool) -> dict:
                 for c in novos_cpfs if c in cpf_map
             ]
             if rows_orig:
-                cur_w.executemany(
+                _executemany_retry(cur_w, conn_w,
                     "INSERT IGNORE INTO cliente_origem"
                     " (cliente_id, fornecedor, data_import)"
                     " VALUES (%s, %s, %s)",
@@ -403,7 +446,7 @@ def processar_staging(conn, staging_id: int, dry_run: bool) -> dict:
 
         if not dry_run:
             if novas_ucs:
-                cur_w.executemany(
+                _executemany_retry(cur_w, conn_w,
                     "INSERT IGNORE INTO cliente_uc"
                     " (cliente_id, uc, distribuidora_id, data_criacao)"
                     " VALUES (%s, %s, %s, %s)",
@@ -443,7 +486,7 @@ def processar_staging(conn, staging_id: int, dry_run: bool) -> dict:
                 stats["macros_novas"] += 1
 
         if rows_macros and not dry_run:
-            cur_w.executemany(
+            _executemany_retry(cur_w, conn_w,
                 "INSERT INTO tabela_macros"
                 " (cliente_id, distribuidora_id, cliente_uc_id, resposta_id, status, data_criacao)"
                 " VALUES (%s, %s, %s, %s, 'pendente', %s)",
@@ -465,7 +508,7 @@ def processar_staging(conn, staging_id: int, dry_run: bool) -> dict:
                     stats["telefones"] += 1
 
         if rows_tels and not dry_run:
-            cur_w.executemany(
+            _executemany_retry(cur_w, conn_w,
                 "INSERT INTO telefones (cliente_id, telefone, tipo, data_criacao)"
                 " VALUES (%s, %s, %s, %s)",
                 rows_tels,
@@ -495,7 +538,7 @@ def processar_staging(conn, staging_id: int, dry_run: bool) -> dict:
                 stats["enderecos"] += 1
 
         if rows_ends and not dry_run:
-            cur_w.executemany(
+            _executemany_retry(cur_w, conn_w,
                 "INSERT INTO enderecos"
                 " (cliente_id, cliente_uc_id, distribuidora_id,"
                 "  endereco, numero, bairro, cidade, uf, cep, data_criacao)"
@@ -535,7 +578,6 @@ def processar_staging(conn, staging_id: int, dry_run: bool) -> dict:
         conn_w.commit()
 
     cur_w.close()
-    conn_w.close()
     return stats
 
 
