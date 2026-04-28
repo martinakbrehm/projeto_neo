@@ -131,23 +131,7 @@ app.layout = html.Div([
                             "fontWeight": "600", "cursor": "pointer"},
             ),
         ], style={"display": "flex", "alignItems": "center"}),
-        html.Div(style={"width": "1px", "background": "#b39ddb", "height": "28px", "margin": "0 20px"}),
-        html.Div([
-            html.Label("Tabela de arquivos:", style={"fontWeight": "700", "fontSize": "14px",
-                                                      "marginRight": "12px", "color": "#1a237e"}),
-            dcc.RadioItems(
-                id="selector-granularidade",
-                options=[
-                    {"label": "  CPF+UC (combo)", "value": "combo"},
-                    {"label": "  Só CPF",         "value": "cpf"},
-                ],
-                value="combo",
-                inline=True,
-                inputStyle={"marginRight": "6px", "cursor": "pointer"},
-                labelStyle={"marginRight": "20px", "fontFamily": "Roboto", "fontSize": "15px",
-                            "fontWeight": "600", "cursor": "pointer"},
-            ),
-        ], style={"display": "flex", "alignItems": "center"}),
+
     ], style={"background": "#ede7f6", "padding": "10px 16px", "borderRadius": "8px",
               "marginBottom": "12px", "display": "flex", "alignItems": "center", "flexWrap": "wrap", "gap": "4px",
               "boxShadow": "0 1px 4px rgba(74,20,140,0.10)"}),
@@ -267,12 +251,7 @@ app.layout = html.Div([
         html.Div([
             html.H3("Resultados por arquivo carregado",
                     style={**SUBTITLE_STYLE, "marginTop": "0", "marginBottom": "6px"}),
-            html.P(
-                id="descricao-granularidade",
-                style={"fontSize": "13px", "color": "#555", "marginBottom": "10px",
-                       "background": "#e3f2fd", "padding": "8px 14px", "borderRadius": "6px",
-                       "borderLeft": "4px solid #1565c0"},
-            ),
+
             dash_table.DataTable(
                 id="tabela-arquivos-geral",
                 columns=[],
@@ -428,7 +407,6 @@ def atualizar_opcoes_filtros(tipo_macro, fornecedor, n_intervals):
         dash.dependencies.Output("tabela-arquivos-geral",     "columns"),
         dash.dependencies.Output("tabela-cobertura",          "data"),
         dash.dependencies.Output("tabela-cobertura",          "columns"),
-        dash.dependencies.Output("descricao-granularidade",   "children"),
     ],
     [
         dash.dependencies.Input("filtro-mes-dropdown",        "value"),
@@ -437,10 +415,9 @@ def atualizar_opcoes_filtros(tipo_macro, fornecedor, n_intervals):
         dash.dependencies.Input("filtro-arquivo-dropdown",    "value"),
         dash.dependencies.Input("selector-tipo-macro",        "data"),
         dash.dependencies.Input("selector-fornecedor",        "value"),
-        dash.dependencies.Input("selector-granularidade",     "value"),
     ]
 )
-def atualizar_dashboard(filtro_mes, resumo_sel, filtro_empresa, filtro_arquivo, tipo_macro, fornecedor, granularidade):
+def atualizar_dashboard(filtro_mes, resumo_sel, filtro_empresa, filtro_arquivo, tipo_macro, fornecedor):
     tipo = "macro"
     filtro_forn = fornecedor if fornecedor and fornecedor != "todos" else None
     # Combinar filtros de m\u00eas e dia numa lista \u00fanica para o orchestrator
@@ -456,7 +433,7 @@ def atualizar_dashboard(filtro_mes, resumo_sel, filtro_empresa, filtro_arquivo, 
             filtro_datas_combinado if filtro_datas_combinado else None,
             filtro_empresa, tipo_macro=tipo,
             filtro_fornecedor=filtro_forn, filtro_arquivo=filtro_arquivo,
-            granularidade=granularidade or "combo",
+            granularidade="combo",
         )
         data_cobertura = orchestrator.build_tabela_cobertura()
     except Exception as _e:
@@ -468,49 +445,21 @@ def atualizar_dashboard(filtro_mes, resumo_sel, filtro_empresa, filtro_arquivo, 
         data_arquivos = []
         data_cobertura = []
 
-    gran = granularidade or "combo"
-
-    # Colunas da visão geral por arquivo
-    if gran == "cpf":
-        cols_geral = [
-            {"name": "Arquivo",            "id": "arquivo"},
-            {"name": "Data carga",         "id": "data_carga"},
-            {"name": "CPFs no arquivo",    "id": "cpfs_no_arquivo"},
-            {"name": "CPFs inéditos",      "id": "cpfs_ineditos"},
-            {"name": "Inéditos processados", "id": "ineditos_processados"},
-            {"name": "Inéditos pendentes", "id": "ineditos_pendentes"},
-            {"name": "Inéditos ativos",    "id": "ineditos_ativos"},
-            {"name": "% Ativos",           "id": "pct_ineditos_ativos"},
-            {"name": "Inéditos inativos",  "id": "ineditos_inativos"},
-            {"name": "% Inativos",         "id": "pct_ineditos_inativos"},
-        ]
-        descricao = (
-            "Visão por CPF (deduplicado): cada CPF conta uma vez, independente de quantas UCs possui. "
-            "Inéditos = CPFs que aparecem pela 1ª vez neste arquivo. "
-            "Processados = inéditos que já rodaram na macro. "
-            "Pendentes = inéditos que ainda não rodaram."
-        )
-    else:
-        cols_geral = [
-            {"name": "Arquivo",              "id": "arquivo"},
-            {"name": "Data carga",           "id": "data_carga"},
-            {"name": "CPFs no arquivo",      "id": "cpfs_no_arquivo"},
-            {"name": "Combos inéditas",      "id": "ucs_ineditas"},
-            {"name": "Processadas",          "id": "combos_processadas"},
-            {"name": "Pendentes",            "id": "combos_pendentes"},
-            {"name": "Ativas",               "id": "combos_ativas"},
-            {"name": "% Ativas",             "id": "pct_combos_ativas"},
-            {"name": "Excluídas",            "id": "combos_excluidas"},
-            {"name": "% Excluídas",          "id": "pct_combos_excluidas"},
-            {"name": "Reprocessar",          "id": "combos_reprocessar"},
-            {"name": "% Reprocessar",        "id": "pct_combos_reprocessar"},
-        ]
-        descricao = (
-            "Visão por CPF+UC (combinação): cada par CPF+UC conta separado — 1 CPF com 3 UCs = 3 combos. "
-            "Combos inéditas = pares que aparecem pela 1ª vez neste arquivo. "
-            "Processadas = combos que já rodaram na macro (consolidado + excluído + reprocessar). "
-            "Pendentes = combos que nunca rodaram."
-        )
+    # Colunas da visão geral por arquivo (CPF+UC combo)
+    cols_geral = [
+        {"name": "Arquivo",              "id": "arquivo"},
+        {"name": "Data carga",           "id": "data_carga"},
+        {"name": "CPFs no arquivo",      "id": "cpfs_no_arquivo"},
+        {"name": "Combos inéditas",      "id": "ucs_ineditas"},
+        {"name": "Processadas",          "id": "combos_processadas"},
+        {"name": "Pendentes",            "id": "combos_pendentes"},
+        {"name": "Ativas",               "id": "combos_ativas"},
+        {"name": "% Ativas",             "id": "pct_combos_ativas"},
+        {"name": "Excluídas",            "id": "combos_excluidas"},
+        {"name": "% Excluídas",          "id": "pct_combos_excluidas"},
+        {"name": "Reprocessar",          "id": "combos_reprocessar"},
+        {"name": "% Reprocessar",        "id": "pct_combos_reprocessar"},
+    ]
 
     # Colunas de cobertura
     cols_cobertura = [
@@ -525,8 +474,7 @@ def atualizar_dashboard(filtro_mes, resumo_sel, filtro_empresa, filtro_arquivo, 
 
     return (data_resumo, data_mensagens,
             data_arquivos, cols_geral,
-            data_cobertura, cols_cobertura,
-            descricao)
+            data_cobertura, cols_cobertura)
 
 
 
