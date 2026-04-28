@@ -198,7 +198,17 @@ app.layout = html.Div([
         # Card: Resumo diario
         html.Div([
             html.H2("Resumo por data de processamento",
-                    style={**SECTION_TITLE_STYLE, "marginBottom": "8px"}),
+                    style={**SECTION_TITLE_STYLE, "marginBottom": "6px"}),
+            html.P(
+                "Cada linha representa um dia em que a macro rodou. "
+                "Total = número de macros executadas no dia (uma por combo CPF+UC). "
+                "Ativos = clientes com contrato consolidado/ativo confirmado. "
+                "Inativos = clientes excluídos, sem contrato ou marcados para reprocessar. "
+                "A linha 'Total' ao final é a soma de todos os dias exibidos, considerando os filtros aplicados.",
+                style={"fontSize": "13px", "color": "#555", "marginBottom": "10px",
+                       "background": "#e8f5e9", "padding": "8px 14px", "borderRadius": "6px",
+                       "borderLeft": "4px solid #2e7d32"},
+            ),
             dash_table.DataTable(
                 id="tabela-resumo",
                 columns=[{"name": COLUMN_LABELS.get(c, c), "id": c}
@@ -216,8 +226,7 @@ app.layout = html.Div([
                 ],
                 page_size=20,
             ),
-            html.P("Dados carregados diretamente do banco de dados.",
-                   style={"color": "#888", "fontSize": "13px", "marginTop": "8px"}),
+
         ], style={"background": "#fff", "borderRadius": "8px", "boxShadow": "0 2px 8px #e0e0e0",
                   "padding": "16px", "marginBottom": "18px"}),
 
@@ -225,7 +234,16 @@ app.layout = html.Div([
         html.Div([
             html.Div([
                 html.H3("Distribuicao de respostas",
-                        style={**SUBTITLE_STYLE, "marginTop": "0", "marginBottom": "8px"}),
+                        style={**SUBTITLE_STYLE, "marginTop": "0", "marginBottom": "6px"}),
+                html.P(
+                    "Mostra como a macro respondeu para cada combo CPF+UC processada. "
+                    "Cada resposta é o retorno direto da distribuidora — ex.: 'Titular confirmado', 'CPF não encontrado', 'Sem contrato ativo'. "
+                    "Quantidade = total de combos que receberam aquela resposta no período/filtro selecionado. "
+                    "Use os filtros de data, empresa ou arquivo para detalhar por lote ou distribuidora.",
+                    style={"fontSize": "13px", "color": "#555", "marginBottom": "10px",
+                           "background": "#fff3e0", "padding": "8px 14px", "borderRadius": "6px",
+                           "borderLeft": "4px solid #e65100"},
+                ),
                 dash_table.DataTable(
                     id="tabela-mensagens",
                     columns=[{"name": "Resposta", "id": "mensagem"},
@@ -251,7 +269,15 @@ app.layout = html.Div([
         html.Div([
             html.H3("Resultados por arquivo carregado",
                     style={**SUBTITLE_STYLE, "marginTop": "0", "marginBottom": "6px"}),
-
+            html.P(
+                "Visão por CPF+UC (combinação): cada par CPF+UC conta separado — 1 CPF com 3 UCs = 3 combos. "
+                "Combos inéditas = pares que aparecem pela 1ª vez neste arquivo. "
+                "Processadas = combos que já rodaram na macro (consolidado + excluído + reprocessar). "
+                "Pendentes = combos que nunca rodaram.",
+                style={"fontSize": "13px", "color": "#555", "marginBottom": "10px",
+                       "background": "#e3f2fd", "padding": "8px 14px", "borderRadius": "6px",
+                       "borderLeft": "4px solid #1565c0"},
+            ),
             dash_table.DataTable(
                 id="tabela-arquivos-geral",
                 columns=[],
