@@ -20,7 +20,8 @@ STATUS_INATIVO = {"excluido", "reprocessar"}
 def build_dashboard_data(resumo_sel, filtro_empresa,
                          tipo_macro: str = "macro",
                          filtro_fornecedor: str = None,
-                         filtro_arquivo=None):
+                         filtro_arquivo=None,
+                         granularidade: str = "combo"):
     """Carrega dados do banco, aplica filtros e retorna (data_resumo, data_mensagens, data_origens).
 
     - resumo_sel       : list de strings de data (YYYY-MM-DD) ou vazio
@@ -32,7 +33,7 @@ def build_dashboard_data(resumo_sel, filtro_empresa,
     df = loader.carregar_dados(tipo_macro)
 
     if df is None or df.empty:
-        return [], [], build_tabela_arquivos()
+        return [], [], build_tabela_arquivos(granularidade)
 
     dff = df.copy()
 
@@ -76,7 +77,7 @@ def build_dashboard_data(resumo_sel, filtro_empresa,
             pass
 
     if dff.empty:
-        return [], [], build_tabela_arquivos()
+        return [], [], build_tabela_arquivos(granularidade)
 
     # ---------------------------------------------------------------
     # Distribuição de mensagens
@@ -147,10 +148,10 @@ def build_dashboard_data(resumo_sel, filtro_empresa,
 
         data_resumo = resumo.to_dict("records")
 
-    return data_resumo, data_mensagens, build_tabela_arquivos()
+    return data_resumo, data_mensagens, build_tabela_arquivos(granularidade)
 
 
-def build_tabela_arquivos() -> list:
+def build_tabela_arquivos(granularidade: str = "combo") -> list:
     """Retorna lista de dicts com estatísticas por arquivo.
 
     A tabela "Visão Geral" usa como TOTAL as combinações CPF+UC inéditas
@@ -188,7 +189,27 @@ def build_tabela_arquivos() -> list:
         if r["combos_processadas"] > 0 else "-", axis=1,
     )
 
+    # CPF-level (visão deduplicada por CPF)
+    df["ineditos_pendentes"] = (df["cpfs_ineditos"] - df["ineditos_processados"]).clip(lower=0)
+    df["pct_ineditos_ativos"] = df.apply(
+        lambda r: f"{round(r['ineditos_ativos'] / r['ineditos_processados'] * 100, 1)}%"
+        if r["ineditos_processados"] > 0 else "-", axis=1,
+    )
+    df["pct_ineditos_inativos"] = df.apply(
+        lambda r: f"{round(r['ineditos_inativos'] / r['ineditos_processados'] * 100, 1)}%"
+        if r["ineditos_processados"] > 0 else "-", axis=1,
+    )
+
     df["data_carga"] = df["data_carga"].astype(str)
+
+    if granularidade == "cpf":
+        return df[[
+            "arquivo", "data_carga",
+            "cpfs_no_arquivo", "cpfs_ineditos",
+            "ineditos_processados", "ineditos_pendentes",
+            "ineditos_ativos", "pct_ineditos_ativos",
+            "ineditos_inativos", "pct_ineditos_inativos",
+        ]].to_dict("records")
 
     return df[[
         "arquivo", "data_carga",
