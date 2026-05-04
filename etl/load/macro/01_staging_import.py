@@ -92,12 +92,18 @@ def ler_arquivo(filepath: Path) -> pd.DataFrame:
     """Lê o arquivo e retorna DataFrame com colunas em lowercase padronizadas."""
     ext = filepath.suffix.lower()
     if ext == ".csv":
-        df = pd.read_csv(filepath, dtype=str, encoding="utf-8",
-                         sep=None, engine="python")
+        # utf-8-sig remove automaticamente o BOM (\ufeff) se presente
+        try:
+            df = pd.read_csv(filepath, dtype=str, encoding="utf-8-sig",
+                             sep=None, engine="python")
+        except UnicodeDecodeError:
+            df = pd.read_csv(filepath, dtype=str, encoding="latin-1",
+                             sep=None, engine="python")
     else:
         df = pd.read_excel(filepath, dtype=str)
 
-    df.columns = [c.strip().lower() for c in df.columns]
+    # strip + lower + remove BOM residual por segurança
+    df.columns = [c.strip().lstrip("\ufeff").lower() for c in df.columns]
 
     # Aliases de colunas entre formatos
     if "cpf_consultado" in df.columns and "cpf" not in df.columns:
@@ -303,6 +309,19 @@ def main():
         print("[INFO] DRY-RUN — nada será gravado.\n")
 
     conn = pymysql.connect(**DB_CONFIG)
+
+    # Garante que AUTO_INCREMENT está além do MAX(id) real de cada tabela de staging.
+    # Evita colisão de IDs em casos de DELETE manual, reimportação ou restart do servidor.
+    if not args.dry_run:
+        _cur = conn.cursor()
+        for _tabela in ("staging_imports", "staging_import_rows"):
+            _cur.execute(f"SELECT COALESCE(MAX(id), 0) + 1 FROM {_tabela}")
+            _proximo = _cur.fetchone()[0]
+            _cur.execute(f"ALTER TABLE {_tabela} AUTO_INCREMENT = %s", (_proximo,))
+        conn.commit()
+        _cur.close()
+        print("[INFO] AUTO_INCREMENT sincronizado com MAX(id) das tabelas de staging.")
+
     resultados = []
     try:
         for fp in arquivos:

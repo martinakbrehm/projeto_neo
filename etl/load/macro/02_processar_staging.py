@@ -454,6 +454,10 @@ def processar_staging(conn, staging_id: int, dry_run: bool) -> dict:
                 )
                 stats["uc_novas"] += cur_w.rowcount
 
+            # fresh_uc_ids_chunk: IDs confirmados via SELECT neste chunk —
+            # somente esses são seguros para usar como FK em tabela_macros.
+            # Inicializa vazio aqui para cobertura do caso chaves_uc_chunk vazio.
+            fresh_uc_ids_chunk: set[int] = set()
             if chaves_uc_chunk:
                 cids_chunk = {tpl[0] for tpl in chaves_uc_chunk}
                 ph = ",".join(["%s"] * len(cids_chunk))
@@ -466,10 +470,18 @@ def processar_staging(conn, staging_id: int, dry_run: bool) -> dict:
                     k = (r[1], r[2], r[3])
                     if k in chaves_uc_chunk:
                         uc_map[k] = r[0]
+                        fresh_uc_ids_chunk.add(r[0])
+
+            # Commit após FASES 1+2: garante que clientes e UCs estão persistidos
+            # antes de inserir tabela_macros. Se o INSERT de macros falhar e for
+            # revertido por deadlock, o retry encontra as UCs já no banco e os
+            # uc_ids em fresh_uc_ids_chunk permanecem válidos — evita FK 1452.
+            conn_w.commit()
         else:
             for i, chave in enumerate(novas_ucs):
                 uc_map[chave] = -(chunk_start + i + 1)
                 stats["uc_novas"] += 1
+            fresh_uc_ids_chunk: set[int] = set()
 
         # ── FASE 3: tabela_macros — executemany INSERT ────────────────────
         rows_macros = []
@@ -478,7 +490,10 @@ def processar_staging(conn, staging_id: int, dry_run: bool) -> dict:
             if not cid:
                 continue
             cid_key = cid if cid > 0 else 0
-            uc_id = uc_map.get((cid_key, d["uc"], distrib_id)) or 0
+            uc_id_raw = uc_map.get((cid_key, d["uc"], distrib_id)) or 0
+            # Só usa o uc_id se foi confirmado no SELECT deste chunk;
+            # IDs do map de startup podem estar obsoletos e causam FK 1452.
+            uc_id = uc_id_raw if uc_id_raw in fresh_uc_ids_chunk else 0
             chave_macro = (cid_key, distrib_id, uc_id)
             if chave_macro not in macros_hoje:
                 rows_macros.append((cid, distrib_id, uc_id or None, RESPOSTA_PENDENTE, data_criacao))
