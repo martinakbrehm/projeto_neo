@@ -239,6 +239,72 @@ def carregar_maps(cur) -> tuple[dict, dict, set, set, set]:
 
 
 # ---------------------------------------------------------------------------
+# Backfill: vincula cliente_uc_id em tabela_macros para um staging
+# ---------------------------------------------------------------------------
+
+def backfill_cliente_uc_id(conn, staging_id: int, dry_run: bool) -> int:  # noqa: C901
+    """
+    Após o insert em tabela_macros, o cliente_uc_id pode ficar NULL por causa
+    da lógica de segurança de FK (fresh_uc_ids_chunk). Este backfill corrige
+    isso usando o CPF+UC exato do staging_import_rows para encontrar a UC certa.
+    Retorna o número de registros vinculados.
+    """
+    cur = conn.cursor()
+    if dry_run:
+        cur.execute("""
+            SELECT COUNT(*) FROM tabela_macros tm
+            JOIN clientes c ON c.id = tm.cliente_id
+            JOIN staging_import_rows sir ON sir.normalized_cpf = c.cpf
+                AND sir.staging_id = %s AND sir.validation_status = 'valid'
+            JOIN cliente_uc cu ON cu.cliente_id = tm.cliente_id
+                AND cu.uc = sir.normalized_uc
+                AND cu.distribuidora_id = tm.distribuidora_id
+            WHERE tm.status = 'pendente' AND tm.cliente_uc_id IS NULL
+        """, (staging_id,))
+        count = cur.fetchone()[0]
+        cur.close()
+        return count
+
+    cur.execute("""
+        UPDATE tabela_macros tm
+        JOIN clientes c ON c.id = tm.cliente_id
+        JOIN staging_import_rows sir ON sir.normalized_cpf = c.cpf
+            AND sir.staging_id = %s AND sir.validation_status = 'valid'
+        JOIN cliente_uc cu ON cu.cliente_id = tm.cliente_id
+            AND cu.uc = sir.normalized_uc
+            AND cu.distribuidora_id = tm.distribuidora_id
+        SET tm.cliente_uc_id = cu.id
+        WHERE tm.status = 'pendente' AND tm.cliente_uc_id IS NULL
+    """, (staging_id,))
+    vinculados = cur.rowcount
+    conn.commit()
+
+    # Fallback: UC do fornecedor pode não bater com a UC cadastrada (número diferente).
+    # Nesse caso, pega a UC mais recente do cliente nessa distribuidora.
+    cur.execute("""
+        UPDATE tabela_macros tm
+        JOIN (
+            SELECT tm2.id AS macro_id, MAX(cu.id) AS uc_id
+            FROM tabela_macros tm2
+            JOIN clientes c2 ON c2.id = tm2.cliente_id
+            JOIN staging_import_rows sir2 ON sir2.normalized_cpf = c2.cpf
+                AND sir2.staging_id = %s AND sir2.validation_status = 'valid'
+            JOIN cliente_uc cu ON cu.cliente_id = tm2.cliente_id
+                               AND cu.distribuidora_id = tm2.distribuidora_id
+            WHERE tm2.status = 'pendente' AND tm2.cliente_uc_id IS NULL
+            GROUP BY tm2.id
+        ) best ON best.macro_id = tm.id
+        SET tm.cliente_uc_id = best.uc_id
+        WHERE tm.status = 'pendente' AND tm.cliente_uc_id IS NULL
+    """, (staging_id,))
+    vinculados += cur.rowcount
+    conn.commit()
+
+    cur.close()
+    return vinculados
+
+
+# ---------------------------------------------------------------------------
 # Processamento de um staging_imports
 # ---------------------------------------------------------------------------
 
@@ -593,6 +659,13 @@ def processar_staging(conn, staging_id: int, dry_run: bool) -> dict:
         conn_w.commit()
 
     cur_w.close()
+
+    # Backfill: vincula cliente_uc_id que ficou NULL por segurança de FK
+    vinculados = backfill_cliente_uc_id(conn_w, staging_id, dry_run)
+    if vinculados > 0:
+        print(f"  [Backfill UC] {vinculados:,} registros vinculados com cliente_uc_id")
+    stats["uc_vinculadas"] = vinculados
+
     return stats
 
 

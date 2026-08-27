@@ -93,12 +93,30 @@ def ler_arquivo(filepath: Path) -> pd.DataFrame:
     ext = filepath.suffix.lower()
     if ext == ".csv":
         # utf-8-sig remove automaticamente o BOM (\ufeff) se presente
-        try:
-            df = pd.read_csv(filepath, dtype=str, encoding="utf-8-sig",
-                             sep=None, engine="python")
-        except UnicodeDecodeError:
-            df = pd.read_csv(filepath, dtype=str, encoding="latin-1",
-                             sep=None, engine="python")
+        encodings = ["utf-8-sig", "latin-1"]
+        df = None
+        for enc in encodings:
+            try:
+                df = pd.read_csv(filepath, dtype=str, encoding=enc,
+                                 sep=None, engine="python")
+                break
+            except UnicodeDecodeError:
+                continue
+        if df is None:
+            raise ValueError(f"Não foi possível decodificar {filepath.name}")
+
+        # Fallback: se sep=None não detectou corretamente (cpf ausente após
+        # normalização), tenta novamente com sep=';' — comum quando endereços
+        # com vírgulas confundem o Sniffer do pandas.
+        cols_norm = [c.strip().lstrip("\ufeff").lower() for c in df.columns]
+        cpf_aliases = {"cpf", "cpf_consultado"}
+        if not cpf_aliases.intersection(cols_norm):
+            for enc in encodings:
+                try:
+                    df = pd.read_csv(filepath, dtype=str, encoding=enc, sep=";")
+                    break
+                except UnicodeDecodeError:
+                    continue
     else:
         df = pd.read_excel(filepath, dtype=str)
 
